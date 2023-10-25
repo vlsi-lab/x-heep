@@ -32,13 +32,16 @@
 module cv32e40x_clic_int_controller_sva
   import uvm_pkg::*;
   import cv32e40x_pkg::*;
-  (
+(
    input logic        clk,
    input logic        rst_n,
 
    input logic        irq_req_ctrl_o,
    input logic        clic_irq_q,
    input logic [7:0]  clic_irq_level_q,
+
+   input logic        global_irq_enable,
+   input logic        irq_wu_ctrl_o,
 
    input logic        ctrl_pending_interrupt,
    input logic        ctrl_interrupt_allowed,
@@ -48,9 +51,7 @@ module cv32e40x_clic_int_controller_sva
 
    input ctrl_fsm_t   ctrl_fsm,
    input dcsr_t       dcsr
-
-   );
-
+);
 
   // Check that a pending interrupt is taken as soon as possible after being enabled
    property p_clic_enable;
@@ -62,7 +63,7 @@ module cv32e40x_clic_int_controller_sva
   endproperty;
 
   a_clic_enable: assert property(p_clic_enable)
-    else `uvm_error("core", "Interrupt not taken soon enough after enabling");
+    else `uvm_error("clic_int_controller", "Interrupt not taken soon enough after enabling");
 
   // Check that only NMI and external debug take presedence over interrupts after being enabled by mret or CSR writes
   property p_irq_pri;
@@ -78,7 +79,7 @@ module cv32e40x_clic_int_controller_sva
   endproperty;
 
   a_irq_pri: assert property(p_irq_pri)
-    else `uvm_error("core", "Interrupt not taken soon enough after enabling")
+    else `uvm_error("clic_int_controller", "Interrupt not taken soon enough after enabling")
 
   // Check a pending interrupt that is disabled is actually not taken
   property p_clic_disable;
@@ -90,6 +91,22 @@ module cv32e40x_clic_int_controller_sva
   endproperty;
 
   a_clic_disable: assert property(p_clic_disable)
-    else `uvm_error("core", "Interrupt taken after disabling");
-endmodule // cv32e40x_cs_registers_sva
+    else `uvm_error("clic_int_controller", "Interrupt taken after disabling");
+
+  // If an interrupt wakeup is signalled while the core is in the SLEEP state, an interrupt
+  // request must be asserted in the next cycle if the signal global_irq_enable is set.
+  property p_req_after_wake;
+    @(posedge clk) disable iff (!rst_n)
+    (  (ctrl_fsm_cs == SLEEP) &&  // Core is in sleep state
+       irq_wu_ctrl_o              // Wakeup requested
+       |=>
+       (irq_req_ctrl_o) // interrupts must be requested
+       or
+       (!irq_req_ctrl_o && !global_irq_enable)); // unless interrupts are not enabled
+  endproperty;
+
+  a_req_after_wake: assert property(p_req_after_wake)
+    else `uvm_error("clic_int_controller", "No request after wakeup signal");
+
+endmodule
 

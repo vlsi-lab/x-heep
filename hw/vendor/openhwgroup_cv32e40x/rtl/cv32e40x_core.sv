@@ -44,8 +44,8 @@ module cv32e40x_core import cv32e40x_pkg::*;
   parameter pma_cfg_t                   PMA_CFG[PMA_NUM_REGIONS-1:0]            = '{default:PMA_R_DEFAULT},
   parameter bit                         CLIC                                    = 0,
   parameter int unsigned                CLIC_ID_WIDTH                           = 5,
-  parameter int unsigned                CLIC_INTTHRESHBITS                      = 8,
   parameter bit                         X_EXT                                   = 0,
+  parameter bit                         X_DUALREAD                              = 1,
   parameter int unsigned                X_NUM_RS                                = 2,
   parameter int unsigned                X_ID_WIDTH                              = 4,
   parameter int unsigned                X_MEM_WIDTH                             = 32,
@@ -103,12 +103,12 @@ module cv32e40x_core import cv32e40x_pkg::*;
   input  logic [63:0]                   time_i,
 
   // eXtension interface
-  if_xif.cpu_compressed                 xif_compressed_if,
-  if_xif.cpu_issue                      xif_issue_if,
-  if_xif.cpu_commit                     xif_commit_if,
-  if_xif.cpu_mem                        xif_mem_if,
-  if_xif.cpu_mem_result                 xif_mem_result_if,
-  if_xif.cpu_result                     xif_result_if,
+  cv32e40x_if_xif.cpu_compressed        xif_compressed_if,
+  cv32e40x_if_xif.cpu_issue             xif_issue_if,
+  cv32e40x_if_xif.cpu_commit            xif_commit_if,
+  cv32e40x_if_xif.cpu_mem               xif_mem_if,
+  cv32e40x_if_xif.cpu_mem_result        xif_mem_result_if,
+  cv32e40x_if_xif.cpu_result            xif_result_if,
 
   // Basic interrupt architecture
   input  logic [31:0]                   irq_i,
@@ -142,7 +142,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
 
   // Number of register file read ports
   // Core will only use two, but X_EXT may mandate 2 or 3
-  localparam int unsigned REGFILE_NUM_READ_PORTS = X_EXT ? X_NUM_RS : 2;
+  localparam int unsigned REGFILE_NUM_READ_PORTS = X_EXT ? (X_DUALREAD ? 4 : X_NUM_RS) : 2;
 
   // Zc is always present
   localparam bit ZC_EXT = 1;
@@ -207,9 +207,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
   logic        abort_op_wb;
 
   // First op bits
-  logic        first_op_if;
   logic        first_op_id;
-  logic        first_op_ex;
 
   // Register file signals from ID/decoder to controller
   logic [REGFILE_NUM_READ_PORTS-1:0] rf_re_id;
@@ -233,7 +231,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
 
   logic [MTVT_ADDR_WIDTH-1:0] mtvt_addr;
 
-  logic [7:0]  mintthresh;
+  logic [7:0]  mintthresh_th;
   mintstatus_t mintstatus;
 
   mcause_t     mcause;
@@ -243,9 +241,13 @@ module cv32e40x_core import cv32e40x_pkg::*;
   logic csr_wr_in_wb_flush;
   logic csr_irq_enable_write;
 
+  privlvl_t     priv_lvl_lsu;
+  privlvlctrl_t priv_lvl_if_ctrl;
+
   privlvl_t     priv_lvl;
 
   logic         csr_mnxti_read;
+  csr_hz_t      csr_hz;
 
   // CLIC signals for returning pointer addresses
   // when mnxti is accessed
@@ -258,10 +260,10 @@ module cv32e40x_core import cv32e40x_pkg::*;
   logic        lsu_last_op_ex;
   lsu_atomic_e lsu_atomic_ex;
   mpu_status_e lsu_mpu_status_wb;
-  logic        lsu_wpt_match_wb;
+  logic [31:0] lsu_wpt_match_wb;
   align_status_e lsu_align_status_wb;
   logic [31:0] lsu_rdata_wb;
-  logic [1:0]  lsu_err_wb;
+  lsu_err_wb_t lsu_err_wb;
   lsu_atomic_e lsu_atomic_wb;
 
   logic        lsu_valid_0;             // Handshake with EX
@@ -281,7 +283,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
 
   logic        data_stall_wb;
 
-  logic        wpt_match_wb;       // Sticky wpt_match from WB stage
+  logic [31:0] wpt_match_wb;       // Sticky wpt_match from WB stage
   mpu_status_e mpu_status_wb;      // Sticky mpu_status from WB stage
   align_status_e align_status_wb;  // Sticky align_status from WB stage
 
@@ -310,9 +312,11 @@ module cv32e40x_core import cv32e40x_pkg::*;
   dcsr_t       dcsr;
 
   // trigger match detected in trigger module (using IF timing)
-  logic        trigger_match_if;
+  // One bit per trigger (max 32 triggers)
+  logic [31:0] trigger_match_if;
   // trigger match detected in trigger module (using EX/LSU timing)
-  logic        trigger_match_ex;
+  // One bit per trigger (max 32 triggers)
+  logic [31:0] trigger_match_ex;
   // trigger match detected in trigger module (using WB timing, etrigger)
   logic        etrigger_wb;
 
@@ -323,14 +327,12 @@ module cv32e40x_core import cv32e40x_pkg::*;
   logic        sys_en_id;
   logic        sys_mret_insn_id;
   logic        csr_en_raw_id;
-  csr_opcode_e csr_op_id;
   logic        csr_illegal;
 
   // CSR illegal in EX due to offloading and pipeline accept
   logic        xif_csr_error_ex;
 
   // irq signals
-  // TODO:AB Should find a proper suffix for signals from interrupt_controller
   logic        irq_req_ctrl;
   logic [9:0]  irq_id_ctrl;
   logic        irq_wu_ctrl;
@@ -353,10 +355,13 @@ module cv32e40x_core import cv32e40x_pkg::*;
 
   // eXtension interface signals
   logic        xif_offloading_id;
+  logic        xif_dualread;
+
+  logic        unused_signals;
 
   // Internal OBI interfaces
-  if_c_obi #(.REQ_TYPE(obi_inst_req_t), .RESP_TYPE(obi_inst_resp_t))  m_c_obi_instr_if();
-  if_c_obi #(.REQ_TYPE(obi_data_req_t), .RESP_TYPE(obi_data_resp_t))  m_c_obi_data_if();
+  cv32e40x_if_c_obi #(.REQ_TYPE(obi_inst_req_t), .RESP_TYPE(obi_inst_resp_t))  m_c_obi_instr_if();
+  cv32e40x_if_c_obi #(.REQ_TYPE(obi_data_req_t), .RESP_TYPE(obi_data_resp_t))  m_c_obi_data_if();
 
   // Connect toplevel OBI signals to internal interfaces
   assign instr_req_o                         = m_c_obi_instr_if.s_req.req;
@@ -382,7 +387,8 @@ module cv32e40x_core import cv32e40x_pkg::*;
   assign m_c_obi_data_if.s_gnt.gnt           = data_gnt_i;
   assign m_c_obi_data_if.s_rvalid.rvalid     = data_rvalid_i;
   assign m_c_obi_data_if.resp_payload.rdata  = data_rdata_i;
-  assign m_c_obi_data_if.resp_payload.err    = data_err_i;
+  assign m_c_obi_data_if.resp_payload.err[0] = data_err_i;
+  assign m_c_obi_data_if.resp_payload.err[1] = 1'b0; // Will be assigned in the response filter
   assign m_c_obi_data_if.resp_payload.exokay = data_exokay_i;
 
   assign debug_havereset_o = ctrl_fsm.debug_havereset;
@@ -400,7 +406,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
   assign dbg_ack   = ctrl_fsm.dbg_ack;
 
   // Gate off the internal debug_request signal if debug support is not configured.
-  assign debug_req_gated = (DEBUG != 0) ? debug_req_i : 1'b0;
+  assign debug_req_gated = DEBUG ? debug_req_i : 1'b0;
 
   //////////////////////////////////////////////////////////////////////////////////////////////
   //   ____ _            _      __  __                                                   _    //
@@ -481,7 +487,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .mtvt_addr_i         ( mtvt_addr                ), // CLIC vector base
     .jvt_mode_i          ( jvt_mode                 ),
 
-    .m_c_obi_instr_if    ( m_c_obi_instr_if         ), // Instruction bus interface
+    .m_c_obi_instr_if    ( m_c_obi_instr_if.master  ), // Instruction bus interface
 
     .if_id_pipe_o        ( if_id_pipe               ),
 
@@ -494,13 +500,15 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .ptr_in_if_o         ( ptr_in_if                ),
     .priv_lvl_if_o       ( priv_lvl_if              ),
 
-    .first_op_o          ( first_op_if              ),
     .last_op_o           ( last_op_if               ),
     .abort_op_o          ( abort_op_if              ),
 
     // Pipeline handshakes
     .if_valid_o          ( if_valid                 ),
     .id_ready_i          ( id_ready                 ),
+
+    // Privilege level
+    .priv_lvl_ctrl_i     ( priv_lvl_if_ctrl         ),
 
     // eXtension interface
     .xif_compressed_if   ( xif_compressed_if        ),
@@ -558,7 +566,6 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .alu_jmpr_o                   ( alu_jmpr_id               ),
     .sys_mret_insn_o              ( sys_mret_insn_id          ),
     .csr_en_raw_o                 ( csr_en_raw_id             ),
-    .csr_op_o                     ( csr_op_id                 ),
     .alu_en_o                     ( alu_en_id                 ),
     .sys_en_o                     ( sys_en_id                 ),
 
@@ -577,7 +584,8 @@ module cv32e40x_core import cv32e40x_pkg::*;
 
     // eXtension interface
     .xif_issue_if                 ( xif_issue_if              ),
-    .xif_offloading_o             ( xif_offloading_id         )
+    .xif_offloading_o             ( xif_offloading_id         ),
+    .xif_dualread_o               ( xif_dualread              )
   );
 
   /////////////////////////////////////////////////////
@@ -613,6 +621,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .csr_rdata_i                ( csr_rdata                    ),
     .csr_illegal_i              ( csr_illegal                  ),
     .csr_mnxti_read_i           ( csr_mnxti_read               ),
+    .csr_hz_i                   ( csr_hz                       ),
 
     // Branch decision
     .branch_decision_o          ( branch_decision_ex           ),
@@ -636,8 +645,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .ex_ready_o                 ( ex_ready                     ),
     .ex_valid_o                 ( ex_valid                     ),
     .wb_ready_i                 ( wb_ready                     ),
-    .last_op_o                  ( last_op_ex                   ),
-    .first_op_o                 ( first_op_ex                  )
+    .last_op_o                  ( last_op_ex                   )
   );
 
   ////////////////////////////////////////////////////////////////////////////////////////
@@ -673,7 +681,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .ctrl_fsm_i            ( ctrl_fsm           ),
 
     // Data OBI interface
-    .m_c_obi_data_if       ( m_c_obi_data_if    ),
+    .m_c_obi_data_if       ( m_c_obi_data_if.master ),
 
     // Control signals
     .busy_o                ( lsu_busy           ),
@@ -705,6 +713,9 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .lsu_wpt_match_1_o     ( lsu_wpt_match_wb   ),
     .lsu_align_status_1_o  ( lsu_align_status_wb),
     .lsu_atomic_1_o        ( lsu_atomic_wb      ),
+
+    // Privilege level
+    .priv_lvl_lsu_i        ( priv_lvl_lsu       ),
 
     // Valid/ready
     .valid_0_i             ( lsu_valid_ex       ), // First LSU stage (EX)
@@ -800,7 +811,6 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .ZC_EXT                     ( ZC_EXT                 ),
     .CLIC                       ( CLIC                   ),
     .CLIC_ID_WIDTH              ( CLIC_ID_WIDTH          ),
-    .CLIC_INTTHRESHBITS         ( CLIC_INTTHRESHBITS     ),
     .DEBUG                      ( DEBUG                  ),
     .DBG_NUM_TRIGGERS           ( DBG_NUM_TRIGGERS       ),
     .NUM_MHPMCOUNTERS           ( NUM_MHPMCOUNTERS       ),
@@ -827,12 +837,14 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .mepc_o                     ( mepc                   ),
     .mie_o                      ( mie                    ),
     .mintstatus_o               ( mintstatus             ),
-    .mintthresh_o               ( mintthresh             ),
+    .mintthresh_th_o            ( mintthresh_th          ),
     .mstatus_o                  ( mstatus                ),
     .mtvec_addr_o               ( mtvec_addr             ),
     .mtvec_mode_o               ( mtvec_mode             ),
     .mtvt_addr_o                ( mtvt_addr              ),
 
+    .priv_lvl_if_ctrl_o         ( priv_lvl_if_ctrl       ),
+    .priv_lvl_lsu_o             ( priv_lvl_lsu           ),
     .priv_lvl_o                 ( priv_lvl               ),
 
     // ID/EX pipeline
@@ -849,6 +861,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .csr_counter_read_o         ( csr_counter_read       ),
     .csr_mnxti_read_o           ( csr_mnxti_read         ),
     .csr_irq_enable_write_o     ( csr_irq_enable_write   ),
+    .csr_hz_o                   ( csr_hz                 ),
 
     // Interface to CSRs (SRAM like)
     .csr_rdata_o                ( csr_rdata              ),
@@ -897,6 +910,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .REGFILE_NUM_READ_PORTS         ( REGFILE_NUM_READ_PORTS ),
     .CLIC                           ( CLIC                   ),
     .CLIC_ID_WIDTH                  ( CLIC_ID_WIDTH          ),
+    .RV32                           ( RV32                   ),
     .DEBUG                          ( DEBUG                  )
   )
   controller_i
@@ -941,7 +955,6 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .sys_en_id_i                    ( sys_en_id              ),
     .sys_mret_id_i                  ( sys_mret_insn_id       ),
     .csr_en_raw_id_i                ( csr_en_raw_id          ),
-    .csr_op_id_i                    ( csr_op_id              ),
     .first_op_id_i                  ( first_op_id            ),
 
     // LSU
@@ -971,6 +984,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .mtvec_mode_i                   ( mtvec_mode             ),
     .mcause_i                       ( mcause                 ),
     .mintstatus_i                   ( mintstatus             ),
+    .csr_hz_i                       ( csr_hz                 ),
 
     // Trigger module
     .etrigger_wb_i                  ( etrigger_wb            ),
@@ -991,7 +1005,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .fencei_flush_req_o             ( fencei_flush_req_o     ),
 
     // Data OBI interface
-    .m_c_obi_data_if                ( m_c_obi_data_if        ),
+    .m_c_obi_data_if                ( m_c_obi_data_if.monitor),
 
     .id_ready_i                     ( id_ready               ),
     .id_valid_i                     ( id_valid               ),
@@ -1048,7 +1062,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
 
         // From cs_registers
         .mstatus_i            ( mstatus            ),
-        .mintthresh_i         ( mintthresh         ),
+        .mintthresh_th_i      ( mintthresh_th      ),
         .mintstatus_i         ( mintstatus         ),
         .mcause_i             ( mcause             ),
         .priv_lvl_i           ( priv_lvl           ),
@@ -1058,6 +1072,10 @@ module cv32e40x_core import cv32e40x_pkg::*;
         .mnxti_irq_id_o       ( mnxti_irq_id       ),
         .mnxti_irq_level_o    ( mnxti_irq_level    )
       );
+
+      logic unused_clic_signals;
+      assign unused_clic_signals = |mie;
+
     end else begin : gen_basic_interrupt
       cv32e40x_int_controller
       int_controller_i
@@ -1122,13 +1140,18 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .rst_n              ( rst_ni      ),
 
     // Read ports
-    .raddr_i            ( rf_raddr_id ),
-    .rdata_o            ( rf_rdata_id ),
+    .dualread_i         ( xif_dualread ),
+    .raddr_i            ( rf_raddr_id  ),
+    .rdata_o            ( rf_rdata_id  ),
 
     // Write ports
     .waddr_i            ( rf_waddr    ),
     .wdata_i            ( rf_wdata    ),
     .we_i               ( rf_we       )
   );
+
+
+  // Some signals are unused on purpose (typically they are used by RVFI code). Use them here for easier LINT waiving.
+  assign unused_signals = dbg_ack | irq_ack | (|irq_id) | (|irq_level) | (|irq_priv) | irq_shv;
 
 endmodule

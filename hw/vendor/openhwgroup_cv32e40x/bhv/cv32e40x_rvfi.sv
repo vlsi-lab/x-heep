@@ -31,7 +31,7 @@ module cv32e40x_rvfi
    input logic                                rst_ni,
 
    // Non-pipeline Probes
-   if_c_obi.monitor                           m_c_obi_instr_if,
+   cv32e40x_if_c_obi.monitor                  m_c_obi_instr_if,
 
    //// IF Probes ////
    input logic                                if_valid_i,
@@ -86,6 +86,7 @@ module cv32e40x_rvfi
    input obi_data_req_t                       buffer_trans_ex_i,
    input logic                                buffer_trans_valid_ex_i,
    input logic                                lsu_split_q_ex_i,
+   input logic                                lsu_split_0_ex_i,
 
    // WB probes
    input logic                                wb_ready_i,
@@ -103,11 +104,16 @@ module cv32e40x_rvfi
    input logic [4:0]                          rf_addr_wb_i,
    input logic [31:0]                         rf_wdata_wb_i,
    input logic [31:0]                         lsu_rdata_wb_i,
+   input logic                                lsu_exokay_wb_i,
+   input lsu_err_wb_t                         lsu_err_wb_i,
    input logic                                mret_ptr_wb_i,
    input logic                                clic_ptr_wb_i,
    input logic                                csr_mscratchcsw_in_wb_i,
    input logic                                csr_mscratchcswl_in_wb_i,
    input logic                                csr_mnxti_in_wb_i,
+   input logic [31:0]                         wpt_match_wb_i,
+   input mpu_status_e                         mpu_status_wb_i,
+   input align_status_e                       align_status_wb_i,
 
    // PC
    input logic [31:0]                         branch_addr_n_i,
@@ -124,6 +130,7 @@ module cv32e40x_rvfi
    input logic                                nmi_is_store_i,         // regular NMI type
    input logic                                debug_mode_q_i,
    input logic [2:0]                          debug_cause_n_i,
+   input logic                                etrigger_in_wb_i,
 
    // Interrupt Controller probes
    input logic [31:0]                         irq_i,
@@ -191,15 +198,9 @@ module cv32e40x_rvfi
    input logic [31:0]                         csr_tdata2_n_i,
    input logic [31:0]                         csr_tdata2_q_i,
    input logic                                csr_tdata2_we_i,
-   input logic [31:0]                         csr_tdata3_n_i,
-   input logic [31:0]                         csr_tdata3_q_i,
-   input logic                                csr_tdata3_we_i,
    input logic [31:0]                         csr_tinfo_n_i,
    input logic [31:0]                         csr_tinfo_q_i,
    input logic                                csr_tinfo_we_i,
-   input logic [31:0]                         csr_tcontrol_n_i,
-   input logic [31:0]                         csr_tcontrol_q_i,
-   input logic                                csr_tcontrol_we_i,
    input logic [31:0]                         csr_tselect_n_i,
    input logic [31:0]                         csr_tselect_q_i,
    input logic                                csr_tselect_we_i,
@@ -302,6 +303,8 @@ module cv32e40x_rvfi
    output logic [63:0]                        rvfi_order,
    output logic [31:0]                        rvfi_insn,
    output logic [2:0]                         rvfi_instr_prot,
+   output logic [1:0]                         rvfi_instr_memtype,
+   output logic                               rvfi_instr_dbg,
    output rvfi_trap_t                         rvfi_trap,
    output logic [ 0:0]                        rvfi_halt,
    output rvfi_intr_t                         rvfi_intr,
@@ -327,7 +330,12 @@ module cv32e40x_rvfi
    output logic [ 4*NMEM-1:0]                 rvfi_mem_wmask,
    output logic [32*NMEM-1:0]                 rvfi_mem_rdata,
    output logic [32*NMEM-1:0]                 rvfi_mem_wdata,
+   output logic [ 1*NMEM-1:0]                 rvfi_mem_exokay,
+   output logic [ 1*NMEM-1:0]                 rvfi_mem_err,
    output logic [ 3*NMEM-1:0]                 rvfi_mem_prot,
+   output logic [ 6*NMEM-1:0]                 rvfi_mem_atop,
+   output logic [ 2*NMEM-1:0]                 rvfi_mem_memtype,
+   output logic [ NMEM-1  :0]                 rvfi_mem_dbg,
 
    output logic [32*32-1:0]                   rvfi_gpr_rdata,
    output logic [31:0]                        rvfi_gpr_rmask,
@@ -416,18 +424,14 @@ module cv32e40x_rvfi
    output logic [31:0]                        rvfi_csr_tselect_wmask,
    output logic [31:0]                        rvfi_csr_tselect_rdata,
    output logic [31:0]                        rvfi_csr_tselect_wdata,
-   output logic [ 3:0] [31:0]                 rvfi_csr_tdata_rmask, // 1-3 implemented
-   output logic [ 3:0] [31:0]                 rvfi_csr_tdata_wmask,
-   output logic [ 3:0] [31:0]                 rvfi_csr_tdata_rdata,
-   output logic [ 3:0] [31:0]                 rvfi_csr_tdata_wdata,
+   output logic [ 2:0] [31:0]                 rvfi_csr_tdata_rmask, // 1-2 implemented
+   output logic [ 2:0] [31:0]                 rvfi_csr_tdata_wmask,
+   output logic [ 2:0] [31:0]                 rvfi_csr_tdata_rdata,
+   output logic [ 2:0] [31:0]                 rvfi_csr_tdata_wdata,
    output logic [31:0]                        rvfi_csr_tinfo_rmask,
    output logic [31:0]                        rvfi_csr_tinfo_wmask,
    output logic [31:0]                        rvfi_csr_tinfo_rdata,
    output logic [31:0]                        rvfi_csr_tinfo_wdata,
-   output logic [31:0]                        rvfi_csr_tcontrol_rmask,
-   output logic [31:0]                        rvfi_csr_tcontrol_wmask,
-   output logic [31:0]                        rvfi_csr_tcontrol_rdata,
-   output logic [31:0]                        rvfi_csr_tcontrol_wdata,
    output logic [31:0]                        rvfi_csr_dcsr_rmask,
    output logic [31:0]                        rvfi_csr_dcsr_wmask,
    output logic [31:0]                        rvfi_csr_dcsr_rdata,
@@ -599,7 +603,7 @@ module cv32e40x_rvfi
   logic [4:0]        debug_mode;
   logic [4:0] [ 2:0] debug_cause;
   logic [4:0]        instr_pmp_err;
-  logic [4:0] [2:0]  instr_prot;
+  obi_inst_req_t [4:0] instr_req;
   rvfi_intr_t [4:0]  in_trap;
   logic [4:0] [ 4:0] rs1_addr;
   logic [4:0] [ 4:0] rs2_addr;
@@ -625,9 +629,11 @@ module cv32e40x_rvfi
 
   //Propagating from EX stage
   obi_data_req_t     ex_mem_trans;
+  obi_data_req_t     ex_mem_trans_2;
   mem_err_t [3:0]    mem_err;
 
-  logic              lsu_mem_split_wb;
+  logic              lsu_split_2nd_xfer_wb;
+  logic              lsu_split_xfer_wb;
 
   logic              branch_taken_ex;
 
@@ -730,6 +736,7 @@ module cv32e40x_rvfi
   assign insn_funct7 = rvfi_insn[31:25];
   assign insn_csr    = rvfi_insn[31:20];
 
+
   cv32e40x_rvfi_instr_obi
   rvfi_instr_obi_i
   (
@@ -824,6 +831,12 @@ module cv32e40x_rvfi
   // Set rvfi_trap for instructions causing exception or debug entry.
   rvfi_trap_t  rvfi_trap_next;
 
+  // Indicate that a data transfer was blocked before reaching the bus.
+  logic         mem_access_blocked_wb;
+  assign mem_access_blocked_wb   = |wpt_match_wb_i ||
+                                   (mpu_status_wb_i != MPU_OK) ||
+                                   (align_status_wb_i != ALIGN_OK);
+
   always_comb begin
     rvfi_trap_next = '0;
 
@@ -832,8 +845,8 @@ module cv32e40x_rvfi
       // as asynchronous entries will kill the WB stage whereas synchronous entries will not.
       // Indicate that the trap is a synchronous trap into debug mode
       rvfi_trap_next.debug       = 1'b1;
-      // Special case for debug entry from debug mode caused by EBREAK as it is not captured by ctrl_fsm_i.debug_cause
-      rvfi_trap_next.debug_cause = ebreak_in_wb_i ? DBG_CAUSE_EBREAK : ctrl_fsm_i.debug_cause;
+      // Set cause of debug for next rvfi_trap
+      rvfi_trap_next.debug_cause = ctrl_fsm_i.debug_cause;
     end
 
     if (pc_mux_exception) begin
@@ -842,13 +855,14 @@ module cv32e40x_rvfi
       rvfi_trap_next.exception_cause = ctrl_fsm_i.csr_cause.exception_code[5:0]; // All synchronous exceptions fit in lower 6 bits
       rvfi_trap_next.clicptr         = clic_ptr_wb_i;
 
-      // Separate exception causes with the same ecseption cause code
+      // Separate exception causes with the same exception cause code
       case (ctrl_fsm_i.csr_cause.exception_code)
         EXC_CAUSE_INSTR_FAULT : begin
           rvfi_trap_next.cause_type = instr_pmp_err[STAGE_WB] ? 2'h1 : 2'h0;
         end
         EXC_CAUSE_BREAKPOINT : begin
-          // Todo: Add support for trigger match exceptions when implemented in rtl
+          // etrigger.action=0 is not implemented, cause_type is always 0 upon breakpoint exceptions
+          rvfi_trap_next.cause_type = 2'h0;
         end
         EXC_CAUSE_LOAD_FAULT : begin
           rvfi_trap_next.cause_type = mem_err[STAGE_WB];
@@ -872,11 +886,28 @@ module cv32e40x_rvfi
     // Check for single step debug entry, need to include the actual debug_cause_n, as single step has the lowest priority
     // to enter debug and any higher priority cause could be active at the same time.
     if((pending_single_step_i && single_step_allowed_i) && (debug_cause_n_i == DBG_CAUSE_STEP)) begin
-      // The timing of the single step debug entry does not allow using pc_mux for detection
+      // For single step debug entry, the pipeline is not halted. This causes wb_valid to become 1 in the cycle
+      // before DEBUG_TAKEN is entered, as opposed to other debug causes which halt the entire pipeline.
+      // To pick up the rvfi_trap.debug for single step one can thus not rely on 'pc_mux_debug' but must check the
+      // relevant signals within the controller FSM that causes a single step transition into DEBUG_TAKEN.
       rvfi_trap_next.debug       = 1'b1;
       rvfi_trap_next.debug_cause = DBG_CAUSE_STEP;
 
       // In the case of an exception in WB and pending single step, both the exception and the debug flag will be set
+    end
+
+
+    // Check for etrigger debug entry, need to include the actual debug_cause_n, as etrigger has lower priority
+    // to enter debug than for instance external debug request.
+    if((etrigger_in_wb_i && single_step_allowed_i) && (debug_cause_n_i == DBG_CAUSE_TRIGGER)) begin
+      // For etrigger debug entry, the pipeline is not halted. This causes wb_valid to become 1 in the cycle
+      // before DEBUG_TAKEN is entered, as opposed to other debug causes which halt the entire pipeline.
+      // To pick up the rvfi_trap.debug for etrigger one can thus not rely on 'pc_mux_debug' but must check the
+      // relevant signals within the controller FSM that causes a etrigger transition into DEBUG_TAKEN.
+      rvfi_trap_next.debug       = 1'b1;
+      rvfi_trap_next.debug_cause = DBG_CAUSE_TRIGGER;
+
+      // For etrigger, both exception and debug flag is set.
     end
 
     // Set trap bit if there is an exception or debug entry
@@ -891,6 +922,23 @@ module cv32e40x_rvfi
   assign wb_valid_lastop   = wb_valid_i && (last_op_wb_i || abort_op_wb_i) && !(clic_ptr_wb_i && !pc_mux_exception);
 
 
+  // Return byte-mask for bytes that would be part of the 2nd transfer in a split transfer.
+  // Note that this function does not take transfer size into account, it only indicates
+  // the bytes that could be part of the 2nd transfer.
+  function automatic logic [3:0] split_2nd_mask(logic [1:0] addr_lsb);
+    logic [3:0] mask = '0;
+
+    case(addr_lsb[1:0])
+      2'b00 : mask = 4'b0000; // No bytes would come from the 2nd transfer
+      2'b01 : mask = 4'b1000; // Byte 3 would come from the 2nd transfer
+      2'b10 : mask = 4'b1100; // Byte 2,3 would come from the 2nd transfer
+      2'b11 : mask = 4'b1110; // Byte 1,2,3 would com from the 2nd transfer
+    endcase
+
+    return mask;
+  endfunction : split_2nd_mask
+
+
   // Pipeline stage model //
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -900,7 +948,7 @@ module cv32e40x_rvfi
       debug_mode         <= '0;
       debug_cause        <= '0;
       instr_pmp_err      <= '0;
-      instr_prot         <= '0;
+      instr_req          <= '0;
       rs1_addr           <= '0;
       rs2_addr           <= '0;
       rs1_rdata          <= '0;
@@ -908,6 +956,7 @@ module cv32e40x_rvfi
       mem_rmask          <= '0;
       mem_wmask          <= '0;
       ex_mem_trans       <= '0;
+      ex_mem_trans_2     <= '0;
       mem_err            <= {4{MEM_ERR_IO_ALIGN}};
       ex_csr_rdata       <= '0;
       rvfi_dbg           <= '0;
@@ -916,6 +965,8 @@ module cv32e40x_rvfi
       rvfi_order         <= '0;
       rvfi_insn          <= '0;
       rvfi_instr_prot    <= '0;
+      rvfi_instr_memtype <= '0;
+      rvfi_instr_dbg     <= '0;
       rvfi_pc_rdata      <= '0;
       rvfi_pc_wdata      <= '0;
       rvfi_trap          <= '0;
@@ -935,7 +986,12 @@ module cv32e40x_rvfi
       rvfi_mem_rdata     <= '0;
       rvfi_mem_wmask     <= '0;
       rvfi_mem_wdata     <= '0;
+      rvfi_mem_exokay    <= '0;
+      rvfi_mem_err       <= '0;
       rvfi_mem_prot      <= '0;
+      rvfi_mem_memtype   <= '0;
+      rvfi_mem_atop      <= '0;
+      rvfi_mem_dbg       <= '0;
       rvfi_gpr_rdata     <= '0;
       rvfi_gpr_rmask     <= '0;
       rvfi_gpr_wdata     <= '0;
@@ -951,7 +1007,9 @@ module cv32e40x_rvfi
       rs1_re_subop       <= '0;
       rs2_re_subop       <= '0;
 
-      lsu_mem_split_wb   <= '0;
+      lsu_split_2nd_xfer_wb <= '0;
+      lsu_split_xfer_wb     <= '0;
+
 
       pc_wb_past          <= '0;
       instr_rdata_wb_past <= '0;
@@ -986,7 +1044,7 @@ module cv32e40x_rvfi
         end
 
         // Capture OBI prot for the instruction fetch
-        instr_prot[STAGE_ID] <= obi_instr_if.req_payload.prot;
+        instr_req[STAGE_ID] <= obi_instr_if.req_payload;
 
       end else begin
         // Clear in trap if trap reached rvfi outputs or we insert a bubble into the ID stage
@@ -999,9 +1057,7 @@ module cv32e40x_rvfi
         // debug cause is saved to propagate through rvfi pipeline together with next valid instruction
         if (pc_mux_debug) begin
           // Debug cause input only valid during debug taken
-          // Special case for debug entry from debug mode caused by EBREAK as it is not captured by ctrl_fsm_i.debug_cause
-          // A higher priority debug request (e.g. trigger match) will pull ebreak_in_wb_i low and allow the debug cause to propagate
-          debug_cause[STAGE_IF] <=  ebreak_in_wb_i ? 3'h1 : ctrl_fsm_i.debug_cause;
+          debug_cause[STAGE_IF] <=  ctrl_fsm_i.debug_cause;
 
           // If there is a trap in the pipeline when debug is taken, the trap will be suppressed but the side-effects will not.
           // The succeeding instruction therefore needs to re-trigger the intr signals if it it did not reach the rvfi output.
@@ -1060,7 +1116,7 @@ module cv32e40x_rvfi
         debug_mode [STAGE_EX] <= debug_mode [STAGE_ID];
         debug_cause[STAGE_EX] <= debug_cause[STAGE_ID];
         instr_pmp_err[STAGE_EX] <= instr_pmp_err[STAGE_ID];
-        instr_prot[STAGE_EX]    <= instr_prot[STAGE_ID];
+        instr_req[STAGE_EX]    <= instr_req[STAGE_ID];
 
         // Only update rs1/rs2 on the first part of a multi operation instruction.
         // Jumps may actually use rs1 before (id_valid && ex_ready), an assertion exists to check that
@@ -1107,13 +1163,13 @@ module cv32e40x_rvfi
         debug_mode [STAGE_WB] <= debug_mode         [STAGE_EX];
         debug_cause[STAGE_WB] <= debug_cause        [STAGE_EX];
         instr_pmp_err[STAGE_WB] <= instr_pmp_err    [STAGE_EX];
-        instr_prot [STAGE_WB] <= instr_prot         [STAGE_EX];
+        instr_req [STAGE_WB]  <= instr_req          [STAGE_EX];
         rs1_addr   [STAGE_WB] <= rs1_addr           [STAGE_EX];
         rs2_addr   [STAGE_WB] <= rs2_addr           [STAGE_EX];
         rs1_rdata  [STAGE_WB] <= rs1_rdata          [STAGE_EX];
         rs2_rdata  [STAGE_WB] <= rs2_rdata          [STAGE_EX];
-        mem_rmask  [STAGE_WB] <= lsu_data_trans_valid ? mem_rmask[STAGE_EX] : '0;
-        mem_wmask  [STAGE_WB] <= lsu_data_trans_valid ? mem_wmask[STAGE_EX] : '0;
+        mem_rmask  [STAGE_WB] <= mem_rmask          [STAGE_EX];
+        mem_wmask  [STAGE_WB] <= mem_wmask          [STAGE_EX];
         in_trap    [STAGE_WB] <= in_trap            [STAGE_EX];
 
         rs1_addr_subop   [STAGE_WB] <= rs1_addr_subop [STAGE_EX];
@@ -1123,11 +1179,17 @@ module cv32e40x_rvfi
         rs1_re_subop     [STAGE_WB] <= rs1_re_subop   [STAGE_EX];
         rs2_re_subop     [STAGE_WB] <= rs2_re_subop   [STAGE_EX];
 
-        lsu_mem_split_wb <= lsu_split_q_ex_i;
+        lsu_split_2nd_xfer_wb <= lsu_split_q_ex_i;
+        lsu_split_xfer_wb     <= lsu_split_0_ex_i;
+
         if (!lsu_split_q_ex_i) begin
-          // The second part of the split misaligned access is suppressed to keep
+          // The first part of the split misaligned access is preserved to keep
           // the start address and data for the whole misaligned transfer
           ex_mem_trans <= lsu_data_trans;
+        end else begin
+          // ex_mem_trans_2 holds the second part of the split misaligned access.
+          // (We only use this signal to check the obi packet's memtype)
+          ex_mem_trans_2 <= lsu_data_trans;
         end
 
         // Capture cause of LSU exception for the cases that can have multiple reasons for an exception
@@ -1175,7 +1237,10 @@ module cv32e40x_rvfi
         rvfi_rs2_addr  <= mret_ptr_wb ? rs2_addr [STAGE_WB_PAST] : rs2_addr  [STAGE_WB];
         rvfi_rs1_rdata <= mret_ptr_wb ? rs1_rdata[STAGE_WB_PAST] : rs1_rdata [STAGE_WB];
         rvfi_rs2_rdata <= mret_ptr_wb ? rs2_rdata[STAGE_WB_PAST] : rs2_rdata [STAGE_WB];
-        rvfi_instr_prot<= mret_ptr_wb ? instr_prot[STAGE_WB_PAST] : instr_prot[STAGE_WB];
+
+        rvfi_instr_prot    <= mret_ptr_wb ? instr_req[STAGE_WB_PAST].prot    : instr_req[STAGE_WB].prot;
+        rvfi_instr_memtype <= mret_ptr_wb ? instr_req[STAGE_WB_PAST].memtype : instr_req[STAGE_WB].memtype;
+        rvfi_instr_dbg     <= mret_ptr_wb ? instr_req[STAGE_WB_PAST].dbg     : instr_req[STAGE_WB].dbg;
 
         rvfi_mode      <= priv_lvl_i;
 
@@ -1199,7 +1264,7 @@ module cv32e40x_rvfi
         rs2_rdata[STAGE_WB_PAST]    <= rs1_rdata[STAGE_WB];
         debug_cause [STAGE_WB_PAST] <= debug_cause [STAGE_WB];
         debug_mode [STAGE_WB_PAST]  <= debug_mode[STAGE_WB];
-        instr_prot[STAGE_WB_PAST]   <= instr_prot[STAGE_WB];
+        instr_req[STAGE_WB_PAST]   <= instr_req[STAGE_WB];
         pc_wb_past                  <= pc_wb_i;
         instr_rdata_wb_past         <= instr_rdata_wb_i;
         rd_addr_wb_past             <= rd_addr_wb;
@@ -1212,7 +1277,12 @@ module cv32e40x_rvfi
           rvfi_mem_rdata     <= '0;
           rvfi_mem_wmask     <= '0;
           rvfi_mem_wdata     <= '0;
+          rvfi_mem_exokay    <= '0;
+          rvfi_mem_err       <= '0;
           rvfi_mem_prot      <= '0;
+          rvfi_mem_atop      <= '0;
+          rvfi_mem_memtype   <= '0;
+          rvfi_mem_dbg       <= '0;
 
           rvfi_gpr_rdata     <= '0;
           rvfi_gpr_rmask     <= '0;
@@ -1220,15 +1290,51 @@ module cv32e40x_rvfi
           rvfi_gpr_wmask     <= '0;
         end
 
-        // Update rvfi_mem (first part of split misaligned do not cause update)
-        if (!lsu_mem_split_wb) begin
-          rvfi_mem_rdata[(32*(memop_cnt+1))-1 -: 32] <= lsu_rdata_wb_i;
-          rvfi_mem_rmask[ (4*(memop_cnt+1))-1 -:  4] <= mem_rmask [STAGE_WB];
-          rvfi_mem_wmask[ (4*(memop_cnt+1))-1 -:  4] <= mem_wmask [STAGE_WB];
-          rvfi_mem_addr [(32*(memop_cnt+1))-1 -: 32] <= ex_mem_trans.addr;
-          rvfi_mem_wdata[(32*(memop_cnt+1))-1 -: 32] <= ex_mem_trans.wdata;
-          rvfi_mem_prot [ (3*(memop_cnt+1))-1 -:  3] <= ex_mem_trans.prot;
+        // Update rvfi_mem
+        // Both for single and split misaligned transfers, rvfi_mem will be updated upon the initial transfer.
+        // If the 2nd transfer in a split misaligned is blocked (by debug watchpoint, mpu or alignment check), the corresponding bits in rmask/wmaks will be cleared
+        if (!lsu_split_2nd_xfer_wb) begin
+          // 1st transfer of a split misaligned, or the only transfer in case of a single transfer
+          rvfi_mem_rmask[ (4*(memop_cnt+1))-1 -:  4]   <= mem_access_blocked_wb ? '0 : mem_rmask [STAGE_WB];
+          rvfi_mem_wmask[ (4*(memop_cnt+1))-1 -:  4]   <= mem_access_blocked_wb ? '0 : mem_wmask [STAGE_WB];
+          rvfi_mem_addr [(32*(memop_cnt+1))-1 -: 32]   <= ex_mem_trans.addr;
+          rvfi_mem_wdata[(32*(memop_cnt+1))-1 -: 32]   <= ex_mem_trans.wdata;
+          // Using (2*memop_cnt+memop_cnt) rather than 3*memop_cnt. This is a workaround to avoid blackboxed multiplier in the slice boundary calculations
+          rvfi_mem_prot [(2*memop_cnt + memop_cnt) +: 3] <= ex_mem_trans.prot;
+          // Using (4*memop_cnt) + (2*memop_cnt) rather than 6*memop_cnt. This is a workaround to avoid blackboxed multiplier in the slice boundary calculations.
+          rvfi_mem_atop    [ ((4*memop_cnt) + (2*memop_cnt)) +:  6] <= ex_mem_trans.atop;
+          rvfi_mem_memtype [ (2*(memop_cnt+1))-1 -:  2]  <= ex_mem_trans.memtype;
+          rvfi_mem_dbg     [ (1*(memop_cnt+1))-1 -:  1]  <= ex_mem_trans.dbg;
+
+
+          // Report OBI exokay and err on RVFI for all read transactions, for non-bufferable write transactions, and for all atomic transactions (which are always treated as non-bufferable).
+          // For bufferable write transactions exokay and err are reported as 0 on RVFI (no matter what is signaled over OBI) as the response for bufferable write transactions is not
+          // guaranteed to be received in time to be reported on RVFI together with the instruction retirement.
+          //
+          // The err response for bufferable write transactions can lead to an NMI. The exokay response for bufferable write transactions is ignored by the CPU (in fact it is also
+          // ignored for most other transactions as it is only used for SC.W instructions).
+
+          rvfi_mem_exokay  [ (1*(memop_cnt+1))-1 -:  1] <= !mem_access_blocked_wb && (|mem_rmask [STAGE_WB] || (|mem_wmask [STAGE_WB] && !ex_mem_trans.memtype[0])) ? lsu_exokay_wb_i      : '0;
+          rvfi_mem_err     [ (1*(memop_cnt+1))-1 -:  1] <= !mem_access_blocked_wb && (|mem_rmask [STAGE_WB] || (|mem_wmask [STAGE_WB] && !ex_mem_trans.memtype[0])) ? lsu_err_wb_i.bus_err : '0;
         end
+
+        else if (lsu_split_2nd_xfer_wb && !mem_access_blocked_wb) begin
+          // For split access, rvfi_mem_err and rvfi_mem_exokay are based on both misaligned accesses.
+          // But, as mentioned above, we disregard the reported OBI err and exokay signals from bufferable write transactions.
+
+          rvfi_mem_exokay  [ (1*(memop_cnt+1))-1 -:  1] <= rvfi_mem_exokay[ (1'b1*(memop_cnt+1'b1))-1'b1 -:  1] && ((|mem_rmask [STAGE_WB] || (|mem_wmask [STAGE_WB] && !ex_mem_trans_2.memtype[0])) ? lsu_exokay_wb_i      : '0);
+          rvfi_mem_err     [ (1*(memop_cnt+1))-1 -:  1] <= rvfi_mem_err   [ (1'b1*(memop_cnt+1'b1))-1'b1 -:  1] || ((|mem_rmask [STAGE_WB] || (|mem_wmask [STAGE_WB] && !ex_mem_trans_2.memtype[0])) ? lsu_err_wb_i.bus_err : '0);
+        end
+
+        else if (lsu_split_2nd_xfer_wb && mem_access_blocked_wb) begin
+          // 2nd transfer of a split misaligned is blocked. Clear related bits in rmask/wmask
+          rvfi_mem_rmask[ (4*(memop_cnt+1))-1 -:  4] <= rvfi_mem_rmask[ (4*(memop_cnt+1))-1 -:  4] & ~split_2nd_mask(rvfi_mem_addr[1:0]);
+          rvfi_mem_wmask[ (4*(memop_cnt+1))-1 -:  4] <= rvfi_mem_wmask[ (4*(memop_cnt+1))-1 -:  4] & ~split_2nd_mask(rvfi_mem_addr[1:0]);
+        end
+
+        // Propagate rdata from LSU to rvfi_mem.
+        // For split misaligned transfers, lsu_rdata_wb_i is valid when the 2nd transfer has completed
+        rvfi_mem_rdata [(32*(memop_cnt+1))-1 -: 32] <= lsu_rdata_wb_i;
 
         // Update rvfi_gpr for writes to RF
         if (rf_we_wb_i) begin
@@ -1256,7 +1362,9 @@ module cv32e40x_rvfi
           // Increment subop counter
           subop_cnt <= subop_cnt + 4'h1;
 
-          if (|mem_rmask [STAGE_WB] || |mem_wmask [STAGE_WB]) begin
+          // For split transfers, don't increment memop_cnt until the 2nd transfer is complete
+          if ((|mem_rmask [STAGE_WB] || |mem_wmask [STAGE_WB]) &&
+              (lsu_split_xfer_wb ? lsu_split_2nd_xfer_wb : 1'b1)) begin
             memop_cnt <= memop_cnt + 7'h1;
           end
         end
@@ -1464,20 +1572,10 @@ module cv32e40x_rvfi
   assign rvfi_csr_wdata_d.tdata[2]           = csr_tdata2_n_i;
   assign rvfi_csr_wmask_d.tdata[2]           = csr_tdata2_we_i ? '1 : '0;
 
-  assign rvfi_csr_rdata_d.tdata[3]           = csr_tdata3_q_i;
-  assign rvfi_csr_rmask_d.tdata[3]           = '1;
-  assign rvfi_csr_wdata_d.tdata[3]           = csr_tdata3_n_i;
-  assign rvfi_csr_wmask_d.tdata[3]           = csr_tdata3_we_i ? '1 : '0;
-
   assign rvfi_csr_rdata_d.tinfo              = csr_tinfo_q_i;
   assign rvfi_csr_rmask_d.tinfo              = '1;
   assign rvfi_csr_wdata_d.tinfo              = csr_tinfo_n_i;
   assign rvfi_csr_wmask_d.tinfo              = csr_tinfo_we_i ? '1 : '0;
-
-  assign rvfi_csr_rdata_d.tcontrol           = csr_tcontrol_q_i;
-  assign rvfi_csr_rmask_d.tcontrol           = '1;
-  assign rvfi_csr_wdata_d.tcontrol           = csr_tcontrol_n_i;
-  assign rvfi_csr_wmask_d.tcontrol           = csr_tcontrol_we_i ? '1 : '0;
 
   // Debug / Trace
   assign ex_csr_rdata_d.nmip                 = csr_dcsr_q_i[3]; // dcsr.nmip is autonomous. Propagate read value from EX stage
@@ -1818,17 +1916,13 @@ module cv32e40x_rvfi
   assign rvfi_csr_tselect_wmask           = rvfi_csr_wmask.tselect;
   assign rvfi_csr_tdata_rdata             = rvfi_csr_rdata.tdata;
   assign rvfi_csr_tdata_rmask[0]          = '0; // Does not exist
-  assign rvfi_csr_tdata_rmask[3:1]        = rvfi_csr_rmask.tdata[3:1];
+  assign rvfi_csr_tdata_rmask[2:1]        = rvfi_csr_rmask.tdata[2:1];
   assign rvfi_csr_tdata_wdata             = rvfi_csr_wdata.tdata;
   assign rvfi_csr_tdata_wmask             = rvfi_csr_wmask.tdata;
   assign rvfi_csr_tinfo_rdata             = rvfi_csr_rdata.tinfo;
   assign rvfi_csr_tinfo_rmask             = rvfi_csr_rmask.tinfo;
   assign rvfi_csr_tinfo_wdata             = rvfi_csr_wdata.tinfo;
   assign rvfi_csr_tinfo_wmask             = rvfi_csr_wmask.tinfo;
-  assign rvfi_csr_tcontrol_rdata          = rvfi_csr_rdata.tcontrol;
-  assign rvfi_csr_tcontrol_rmask          = rvfi_csr_rmask.tcontrol;
-  assign rvfi_csr_tcontrol_wdata          = rvfi_csr_wdata.tcontrol;
-  assign rvfi_csr_tcontrol_wmask          = rvfi_csr_wmask.tcontrol;
   assign rvfi_csr_dcsr_rdata              = rvfi_csr_rdata.dcsr;
   assign rvfi_csr_dcsr_rmask              = rvfi_csr_rmask.dcsr;
   assign rvfi_csr_dcsr_wdata              = rvfi_csr_wdata.dcsr;

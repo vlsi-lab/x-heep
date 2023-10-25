@@ -28,9 +28,11 @@
 module cv32e40x_controller_fsm_sva
   import uvm_pkg::*;
   import cv32e40x_pkg::*;
-  #(  parameter bit X_EXT     = 1'b0,
-      parameter bit DEBUG     = 1'b0,
-      parameter bit CLIC      = 1'b0
+  #(  parameter bit          X_EXT         = 1'b0,
+      parameter bit          DEBUG         = 1'b0,
+      parameter bit          CLIC          = 1'b0,
+      parameter int unsigned CLIC_ID_WIDTH = 5,
+      parameter rv32_e       RV32          = RV32I
   )
 (
   input logic           clk,
@@ -39,6 +41,8 @@ module cv32e40x_controller_fsm_sva
   input ctrl_fsm_t      ctrl_fsm_o,
   input ctrl_byp_t      ctrl_byp_i,
   input logic           jump_taken_id,
+  input logic           branch_in_ex,
+  input logic           branch_taken_q,
   input logic           branch_taken_ex,
   input logic           branch_decision_ex_i,
   input ctrl_state_e    ctrl_fsm_cs,
@@ -59,7 +63,7 @@ module cv32e40x_controller_fsm_sva
   input logic           csr_illegal_i,
   input logic           pending_single_step,
   input logic           trigger_match_in_wb,
-  input logic [1:0]     lsu_err_wb_i,
+  input lsu_err_wb_t    lsu_err_wb_i,
   input logic           wb_valid_i,
   input logic           fencei_in_wb,
   input logic           fencei_flush_req_o,
@@ -90,11 +94,14 @@ module cv32e40x_controller_fsm_sva
   input logic           first_op_ex_i,
   input logic           last_op_id_i,
   input logic           ex_ready_i,
+  input logic           id_ready_i,
   input logic           sequence_interruptible,
+  input logic           sequence_in_progress_wb,
   input logic           id_stage_haltable,
   input logic           prefetch_valid_if_i,
   input logic           prefetch_is_tbljmp_ptr_if_i,
   input logic           prefetch_is_mret_ptr_if_i,
+  input logic           prefetch_is_clic_ptr_if_i,
   input logic           abort_op_id_i,
   input mcause_t        mcause_i,
   input logic           lsu_trans_valid_i,
@@ -110,7 +117,8 @@ module cv32e40x_controller_fsm_sva
   input pipe_pc_mux_e   pipe_pc_mux_ctrl,
   input logic           ptr_in_if_i,
   input logic           etrigger_in_wb,
-  input logic           wpt_match_wb_i,
+  input logic           etrigger_wb_i,
+  input logic [31:0]    wpt_match_wb_i,
   input logic           debug_req_i,
   input logic           fetch_enable_i,
   input logic           instr_req_o,
@@ -127,7 +135,12 @@ module cv32e40x_controller_fsm_sva
   input logic           dret_in_wb,
   input logic           csr_flush_ack_q,
   input logic           clic_ptr_in_id,
-  input logic           mret_ptr_in_id
+  input logic           mret_ptr_in_id,
+  input logic           alu_jmpr_id_i,
+  input logic [31:0]    jalr_fw_id_i,
+  input logic [REGFILE_WORD_WIDTH-1:0] rf_mem_i [(RV32 == RV32I) ? 32 : 16],
+  input logic [1:0]     response_filter_bus_cnt_q_i,
+  input logic           non_shv_irq_ack
 );
 
 
@@ -150,15 +163,40 @@ module cv32e40x_controller_fsm_sva
                      jump_taken |=> !jump_taken)
       else `uvm_error("controller", "Two jumps back-to-back are taken")
 
-/* todo: fix
   // Check that a jump is taken only when ID is not killed
   a_valid_jump :
     assert property (@(posedge clk)
                      jump_taken |-> if_id_pipe_i.instr_valid && !ctrl_fsm_o.kill_id)
-      else `uvm_error("controller", "Jump taken while ID is halted or killed")
-*/
+      else `uvm_error("controller", "Jump taken while ID is killed")
 
-// Check that xret does not coincide with CSR write (to avoid using wrong return address)
+  // Check that register used for JALR target calculation is stable from the jump is taken from ID until the JALR retires from WB.
+  property p_jalr_stable_target;
+    logic [4:0] jalr_rs_id;
+    logic [31:0] rf_at_jump_id;
+    @(posedge clk) disable iff (!rst_n)
+      ((jump_taken && alu_jmpr_id_i,                                                                                // When JALR is taken from ID,
+        rf_at_jump_id = jalr_fw_id_i,                                                                               // Store (possibly forwarded) RF value used for target calculation
+        jalr_rs_id = if_id_pipe_i.instr.bus_resp.rdata[19:15])                                                      // Store RS from JALR instruction
+        ##1 (!(ctrl_fsm_o.kill_ex || ctrl_fsm_o.kill_wb) throughout (ex_wb_pipe_i.alu_jmp_qual && wb_valid_i)[->1]) // Wait for JALR to retire from WB (while not being killed)
+        |-> rf_mem_i[jalr_rs_id] == rf_at_jump_id);                                                                 // Check that RF value is consistent with the value used for jump target calculation
+  endproperty : p_jalr_stable_target
+
+  a_jalr_stable_target: assert property(p_jalr_stable_target) else `uvm_error("controller", "Assertion a_jalr_stable_target failed");
+
+  // Check that a JALR instruction which reads x0 gets zero as result on jalr_fw_id_i.
+  property p_jalr_target_x0;
+    logic [4:0] jalr_rs_id;
+    logic [31:0] rf_at_jump_id;
+    @(posedge clk) disable iff (!rst_n)
+      (jump_taken && alu_jmpr_id_i && !(|if_id_pipe_i.instr.bus_resp.rdata[19:15])
+      |->
+      jalr_fw_id_i == 32'd0);
+
+  endproperty : p_jalr_target_x0
+
+  a_jalr_target_x0: assert property(p_jalr_target_x0) else `uvm_error("controller", "Assertion a_jalr_target_x0 failed");
+
+  // Check that xret does not coincide with CSR write (to avoid using wrong return address)
   // This check is more strict than really needed; a CSR instruction would be allowed in EX as long
   // as its write action happens before the xret CSR usage
   property p_xret_csr;
@@ -188,20 +226,35 @@ module cv32e40x_controller_fsm_sva
       else `uvm_error("controller", "Interrupt taken while oustanding transactions are pending")
 
   // Ensure <stage>.instr_valid is zero following a kill_<prev_stage>
- /* TODO:OK:low Failing when bubble is inserted in ID (id_ready_o==0) when WFI is in EX.
-            Will investigate how to solve. Agreed that this assertion is maybe too strict. We only need to guarantee that if a stage is killed, that the instruction in that stage never reaches the following stage with instr_valid = 1 (it doesn't need instr_valid of the next stage 0 in the following cycle.
+
+  // Support logic to indicate that IF has been killed, and not yet received a new instruction from the prefetcher
+  logic kill_if_no_prefetch_valid;
+  always_ff @(posedge clk, negedge rst_n) begin
+    if(!rst_n) begin
+      kill_if_no_prefetch_valid <= 1'b0;
+    end
+    else begin
+      if (ctrl_fsm_o.kill_if) begin
+        kill_if_no_prefetch_valid <= 1'b1;
+      end
+      else if (prefetch_valid_if_i) begin
+        kill_if_no_prefetch_valid <= 1'b0;
+      end
+    end
+  end
+
+  // If IF is killed and ID is ready before a new instruction arrives, if_id_pipe_i.instr_valid must be 0
   a_kill_if :
   assert property (@(posedge clk) disable iff (!rst_n)
-                    (ctrl_fsm_o.kill_if) |=> (if_id_pipe_i.instr_valid == 1'b0) )
-    else `uvm_error("controller", "if_id_pipe.instr_valid not zero after kill_if")
-*/
-/* TODO:OK:low Failing when a DIV instruction is being executed
-           Causes ex_ready to be 0. Will be fixed then divider is interruptable
+                    kill_if_no_prefetch_valid && $past(id_ready_i) |-> (if_id_pipe_i.instr_valid == 1'b0) )
+    else `uvm_error("controller", "if_id_pipe_i.instr_valid not zero after kill_if")
+
+  // If ID is killed, id_ex_pipe_i.instr_valid must be 0 following the next ex_ready_i
   a_kill_id :
   assert property (@(posedge clk) disable iff (!rst_n)
-                    (ctrl_fsm_o.kill_id) |=> (id_ex_pipe_i.instr_valid == 1'b0) )
+                    ctrl_fsm_o.kill_id ##0 ex_ready_i[->1] |=> (id_ex_pipe_i.instr_valid == 1'b0) )
     else `uvm_error("controller", "id_ex_pipe.instr_valid not zero after kill_id")
-*/
+
   a_kill_ex :
   assert property (@(posedge clk) disable iff (!rst_n)
                     (ctrl_fsm_o.kill_ex && !ctrl_fsm_o.halt_wb) |=> (ex_wb_pipe_i.instr_valid == 1'b0) )
@@ -229,17 +282,24 @@ module cv32e40x_controller_fsm_sva
           (ex_wb_pipe_i.sys_en && (ex_wb_pipe_i.sys_wfi_insn || ex_wb_pipe_i.sys_wfe_insn) && ex_wb_pipe_i.instr_valid) |-> !(id_ex_pipe_i.lsu_en) )
     else `uvm_error("controller", "LSU instruction follows WFI or WFE")
 
-
-  // Check that lsu_err_wb_i can only be active when an LSU instruction is valid in WB
+  // Check that a load error can only be true when an LSU instruction is valid in WB
   // Not using wb_valid, as that is only active for the second half of misaligned.
   // bus error may also be active on the first half, thus checking only for active LSU in WB.
-  // Todo: Modify to account for response filter (bufferable writes)
-  //a_lsu_err_wb :
-  //  assert property (@(posedge clk) disable iff (!rst_n)
-  //          lsu_err_wb_i[0] |-> ex_wb_pipe_i.instr_valid && ex_wb_pipe_i.lsu_en)
-  //    else `uvm_error("controller", "lsu_error in WB with no valid LSU instruction")
+  a_lsu_load_err_wb :
+    assert property (@(posedge clk) disable iff (!rst_n)
+            (lsu_err_wb_i.bus_err && !lsu_err_wb_i.store)         // Upon LSU error on load
+            |-> ex_wb_pipe_i.instr_valid && ex_wb_pipe_i.lsu_en)  // There must be a valid LSU instruction in WB
+      else `uvm_error("controller", "LSU load error in WB with no valid LSU instruction")
 
-  // Check that fencei handshake is only exersiced when there's a fencei in the writeback stage
+  // Check that a store error can only be true when an LSU instruction is valid in WB, or there's an outstanding OBI transfer
+  a_lsu_store_err_wb :
+    assert property (@(posedge clk) disable iff (!rst_n)
+            (lsu_err_wb_i.bus_err && lsu_err_wb_i.store)          // Upon LSU error on store
+            |-> (ex_wb_pipe_i.instr_valid && ex_wb_pipe_i.lsu_en) // There must be a valid LSU instruction in WB
+            ||  (response_filter_bus_cnt_q_i != '0))              // Or an outstanding transfer on the bus (taking buffered writes into account)
+      else `uvm_error("controller", "LSU store error in WB with no valid LSU instruction or outstanding transfers on the bus")
+
+  // Check that fencei handshake is only exercised when there is a fencei in the writeback stage
   a_fencei_hndshk_fencei_wb :
     assert property (@(posedge clk) disable iff (!rst_n)
            fencei_flush_req_o |-> fencei_in_wb)
@@ -284,6 +344,54 @@ module cv32e40x_controller_fsm_sva
     assert property (@(posedge clk) disable iff (!rst_n)
                      fencei_flush_req_o |-> !lsu_busy_i)
       else `uvm_error("controller", "Fencei handshake active while lsu_busy_o = 1")
+
+  // Check that mret in debug mode results in illegal instruction exception
+  a_mret_dbg_mode_illegal :
+    assert property (@(posedge clk) disable iff (!rst_n)
+                     // Disregard higher priority exceptions and trigger match
+                      !((ex_wb_pipe_i.instr.mpu_status != MPU_OK) || ex_wb_pipe_i.instr.bus_resp.err || trigger_match_in_wb) &&
+                      // Check for mret in instruction word and debug mode
+                      ((ex_wb_pipe_i.instr.bus_resp.rdata == 32'h30200073) && debug_mode_q && wb_valid_i)
+                      |-> exception_in_wb && (exception_cause_wb == EXC_CAUSE_ILLEGAL_INSN))
+      else `uvm_error("controller", "mret in debug mode not flagged as illegal")
+
+  // Helper logic to make assertion look cleaner
+  // Same logic as in the bypass module, but duplicated here to catch any changes in bypass
+  // that could lead to undetected errors
+  logic csrw_ex_wb;
+  assign csrw_ex_wb = (
+                        ((id_ex_pipe_i.csr_en || (id_ex_pipe_i.sys_en && id_ex_pipe_i.sys_mret_insn)) && id_ex_pipe_i.instr_valid) ||
+                        ((ex_wb_pipe_i.csr_en || (ex_wb_pipe_i.sys_en && ex_wb_pipe_i.sys_mret_insn)) && ex_wb_pipe_i.instr_valid)
+                      );
+
+  // Check that mret is stalled in ID if CSR writes (explicit and implicit)
+  // are present in EX or WB. Exluding the case where the second part of an mret is in ID while the first part
+  // is in either EX or WB.
+  a_mret_id_halt :
+  assert property (@(posedge clk) disable iff (!rst_n)
+                    ((sys_en_id_i && sys_mret_id_i) && if_id_pipe_i.instr_valid && csrw_ex_wb)
+                    |-> (!id_valid_i && ctrl_fsm_o.halt_id))
+    else `uvm_error("controller", "mret not halted in ID when CSR write is present in EX or WB")
+
+  // Assert that branches (that are not already taken) are always taken in the first cycle of EX, unless EX is killed or halted
+  // What we really want to check with this assertion is that a branch taken always results
+  // in a pc_set to PC_BRANCH.
+  // If the branch is not taken in the first cycle of EX, caution must be taken to avoid e.g. a jump in
+  // ID taking presedence over the branch in EX.
+
+  a_branch_in_ex_taken_first_cycle:
+  assert property (@(posedge clk) disable iff (!rst_n)
+                    ($rose(branch_in_ex && branch_decision_ex_i) && !branch_taken_q && !(ctrl_fsm_o.halt_ex || ctrl_fsm_o.kill_ex) |->
+                    ctrl_fsm_o.pc_set && (ctrl_fsm_o.pc_mux == PC_BRANCH) &&
+                    ctrl_fsm_o.kill_if && ctrl_fsm_o.kill_id));
+
+  // When flushing the pipeline due to CSR updates in WB, make sure there we don't initiate transactions on the data interface
+  // and that there are no outstanding transactions from the LSU point of view.
+  // There might still be outstanding transactions in the write buffer, which is why we can't check that data_req_o==0
+  a_csr_wr_in_wb_flush_no_obi:
+  assert property (@(posedge clk) disable iff (!rst_n)
+                    (csr_wr_in_wb_flush_i) |-> (lsu_outstanding_cnt == 2'b00) && !lsu_trans_valid_i)
+    else `uvm_error("controller", "Flushing pipeline when the LSU have outstanding transactions")
 
   // assert that NMI's are not reported on irq_ack
   // Exception for the case where the core wakes from SLEEP due to an interrupt
@@ -345,8 +453,8 @@ generate;
 
     // Assert that a CSR instruction that is accepted by both eXtension interface and pipeline
     // causes an illegal instruction
-    // TODO: The checks for mpu_status and bus_resp.err below can be removed once the
-    //       xif offload is fully implemented (no offload if mpu or bus error occured in IF)
+    // todo:xif The checks for mpu_status and bus_resp.err below can be removed once the
+    //           xif offload is fully implemented (no offload if mpu or bus error occured in IF)
     a_duplicate_csr_illegal:
       assert property (@(posedge clk) disable iff (!rst_n)
                       ex_valid_i && wb_ready_i && (id_ex_pipe_i.xif_en && id_ex_pipe_i.xif_meta.accepted) && id_ex_pipe_i.csr_en && !csr_illegal_i &&
@@ -639,15 +747,13 @@ if (CLIC) begin
                   $stable(mintstatus_i))
     else `uvm_error("controller", "mintstatus changed after taking an NMI")
 
-  // The only possible cause for a instruction misaligned exception is an mret pointer.
-  a_mret_ptr_exception:
-  assert property (@(posedge clk) disable iff (!rst_n)
-                  (exception_cause_wb == EXC_CAUSE_INSTR_MISALIGNED) &&
-                  exception_in_wb
-                  |->
-                  mret_ptr_in_wb)
-
-    else `uvm_error("controller", "Instruction address misaligned exception without mret pointer.")
+  // Check that unused bits of ctrl_fsm.mtvt_pc_mux is zero
+  if (CLIC_ID_WIDTH < 10) begin
+    a_unused_mtvt_bits:
+    assert property (@(posedge clk) disable iff (!rst_n)
+                    |ctrl_fsm_o.mtvt_pc_mux[9:CLIC_ID_WIDTH] == 1'b0)
+      else `uvm_error("controller", "Unused bits of ctrl_fsm_o.mtvt_pc_mux is not zero")
+  end
 
 end else begin // CLIC
   // Check that CLIC related signals are inactive when CLIC is not configured.
@@ -657,7 +763,6 @@ end else begin // CLIC
                   |->
                   (clic_ptr_in_progress_id_set != 1'b1)     &&
                   !ctrl_fsm_o.csr_cause.minhv       &&
-                  !ctrl_fsm_o.csr_clear_minhv       &&
                   !mcause_i.minhv                   &&
                   !if_id_pipe_i.instr_meta.clic_ptr &&
                   !id_ex_pipe_i.instr_meta.clic_ptr &&
@@ -703,23 +808,17 @@ end
   end
 
   // Check if we are allowed to halt the ID stage.
-  // If ID stage contains a non-first operation, we cannot halt ID as that
+  // If ID stage contains a non-first, non-aborted operation, we cannot halt ID as that
   // could cause a deadlock because a sequence cannot finish through ID.
-  // If ID stage does not contain a valid instruction, the same check is performed
-  // for the IF stage (although this is likely not needed).
-  // todo: This logic currently does not match the RTL version when not gating instruction in IF due to exceptions.
-  //       Assertions checking SVA vs RTL commented out.
   logic id_stage_haltable_alt;
   always_comb begin
     if (if_id_pipe_i.instr_valid) begin
-      id_stage_haltable_alt = first_op_id_i;
-    end else if (prefetch_valid_if_i) begin
-      id_stage_haltable_alt = first_op_if_i;
+      id_stage_haltable_alt = first_op_id_i || if_id_pipe_i.abort_op;
     end else begin
-      // If no instruction is ready in the whole pipeline (including IF), then there are nothing in progress
-      // and we should safely be able to halt ID unless the IF stage is waiting for a table jump pointer or
-      // a CLIC pointer that is a side effect of an mret
-      id_stage_haltable_alt = !(prefetch_is_tbljmp_ptr_if_i || prefetch_is_mret_ptr_if_i);
+      // If no instruction is ready in ID, then there is nothing in progress
+      // and we should safely be able to halt ID unless the IF stage is waiting for a table jump pointer,
+      // mret pointer or CLIC pointer
+      id_stage_haltable_alt = !(prefetch_is_tbljmp_ptr_if_i || prefetch_is_mret_ptr_if_i || prefetch_is_clic_ptr_if_i);
     end
   end
 
@@ -738,24 +837,42 @@ end
                     (!sequence_interruptible |-> !(ctrl_fsm_o.pc_set && (ctrl_fsm_o.pc_mux == PC_TRAP_NMI))))
     else `uvm_error("controller", "Sequence broken by NMI")
 
-  a_no_sequence_ext_debug:
+  // A sequence that is in progress with no exception on the operation currently in WB can only enter debug mode
+  // due to finishing the instruction if single stepped, or a watchpoint trigger fired on the operation in WB.
+  a_no_exc_no_sequence_debug:
   assert property (@(posedge clk) disable iff (!rst_n)
-                    (!sequence_interruptible |-> !(ctrl_fsm_o.dbg_ack && (debug_cause_q == DBG_CAUSE_HALTREQ)))) // todo: timing of (debug_cause_q == DBG_CAUSE_HALTREQ) seems wrong (and whole calsuse should not be needed)
-    else `uvm_error("controller", "Sequence broken by external debug")
+                    sequence_in_progress_wb && // Sequence is in progress (first_op done in WB)
+                    !exception_in_wb           // Operation in WB has no exception
+                    |=>
+                    !ctrl_fsm_o.dbg_ack ||    // Cannot take debug
+                    (((debug_cause_q == DBG_CAUSE_TRIGGER) && |wpt_match_wb_i && !sequence_in_progress_wb) || // Unless we have a watchpoint trigger
+                     ((debug_cause_q == DBG_CAUSE_STEP) && $past(last_op_wb_i) && !sequence_in_progress_wb))) // Or we finished single stepping the instruction
+    else `uvm_error("controller", "Sequence broken by non-watchpoint debug when no exception occurred")
+
+  // A sequence that is in progress and the operation currently in WB has an exception can only enter debug because
+  // of an exception trigger fired or the instruction is being stepped and the exception caused debug reentry.
+  a_exc_no_sequence_debug:
+  assert property (@(posedge clk) disable iff (!rst_n)
+                    sequence_in_progress_wb && // Sequence is in progress (first_op done in WB)
+                    exception_in_wb            // Operation in WB has an exception
+                    |=>
+                    !ctrl_fsm_o.dbg_ack ||    // Cannot take debug
+                    (((debug_cause_q == DBG_CAUSE_TRIGGER) && $past(etrigger_wb_i) && !sequence_in_progress_wb) || // Unless we took an exception trigger
+                     ((debug_cause_q == DBG_CAUSE_STEP) && $past(abort_op_wb_i) && !sequence_in_progress_wb)))     // Or a stepped instruction finished due to the exception
+    else `uvm_error("controller", "Sequence broken by debug entry when exception occurred.")
 
   a_no_sequence_wb_kill:
   assert property (@(posedge clk) disable iff (!rst_n)
-                    (!sequence_interruptible |-> !ctrl_fsm_o.kill_wb))
-    else `uvm_error("controller", "Sequence broken by external debug")
+                    (sequence_in_progress_wb |-> !ctrl_fsm_o.kill_wb))
+    else `uvm_error("controller", "WB killed while sequence was in progress")
 
-/* todo: Bring back in if id_stage_haltable_alt can be correctly calculated.
   // Check that we do not allow ID stage to be halted for pending interrupts/debug if a sequence is not done
   // in the ID stage.
   a_id_stage_haltable:
   assert property (@(posedge clk) disable iff (!rst_n)
-                    (id_stage_haltable_alt == id_stage_haltable))
+                    (id_stage_haltable |-> id_stage_haltable_alt))
     else `uvm_error("controller", "id_stage_haltable not correct")
-*/
+
   // Assert that we have no pc_set in the same cycle as a CSR write in WB requires flushing of the pipeline
   a_csr_wr_in_wb_no_fetch:
   assert property (@(posedge clk) disable iff (!rst_n)
@@ -844,17 +961,6 @@ end
                   !ctrl_fsm_o.halt_wb)
   else `uvm_error("controller", "csr_restore_mret when WB is halted")
 
-  if (CLIC) begin
-    // CSR instructions should be stalled in ID if there is a CLIC or mret pointer in EX or WB (RAW hazard)
-    a_csr_stall_on_ptr:
-    assert property (@(posedge clk) disable iff (!rst_n)
-                    (csr_en_id_i && if_id_pipe_i.instr_valid) &&
-                    (((id_ex_pipe_i.instr_meta.clic_ptr || id_ex_pipe_i.instr_meta.mret_ptr) && id_ex_pipe_i.instr_valid) ||
-                    ((ex_wb_pipe_i.instr_meta.clic_ptr || ex_wb_pipe_i.instr_meta.mret_ptr) && ex_wb_pipe_i.instr_valid))
-                    |->
-                    !id_valid_i)
-    else `uvm_error("controller", "CSR* not stalled in ID when CLIC pointer is in EX or WB")
-  end
 
 
   // When interrupts or debug is taken, the PC stored to dpc or mepc cannot come from a pointer
@@ -1073,7 +1179,7 @@ generate
       assert property (@(posedge clk) disable iff (!rst_n)
                       (ctrl_fsm_cs == DEBUG_TAKEN) && (ex_wb_pipe_i.lsu_en && ex_wb_pipe_i.instr_valid)
                       |->
-                      $past(wpt_match_wb_i))
+                      $past(|wpt_match_wb_i))
         else `uvm_error("conroller", "LSU active in WB during DEBUG_TAKEN with no preceeding watchpoint trigger")
 
     // MRET in WB shall not update CSRs if WB stage is halted (debug entry)
@@ -1088,12 +1194,30 @@ generate
                         etrigger_in_wb |-> exception_in_wb)
         else `uvm_error("controller", "etrigger_in_wb when there is no exception in WB")
 
+    a_no_etrig_on_halt_or_kill:
+      assert property (@(posedge clk) disable iff (!rst_n)
+                        (ctrl_fsm_o.halt_wb || ctrl_fsm_o.kill_wb)
+                        |->
+                        !etrigger_in_wb)
+        else `uvm_error("controller", "etrigger_in_wb when WB is halted or killed")
+
+    a_no_step_on_halt_or_kill:
+      assert property (@(posedge clk) disable iff (!rst_n)
+                        (ctrl_fsm_o.halt_wb || ctrl_fsm_o.kill_wb) // WB is halted or killed
+                        |->
+                        !pending_single_step                       // No single step should be pending
+                        or
+                        non_shv_irq_ack                            // Unless we ack an non-shv interrupt (kills WB)
+                        or
+                        (pending_nmi && nmi_allowed))              // or we take an NMI (kills WB)
+        else `uvm_error("controller", "pending single step when WB is halted or killed")
+
      // Only halt LSU instruction in WB for watchpoint trigger matches
     a_halt_lsu_wb:
       assert property (@(posedge clk) disable iff (!rst_n)
                       (ex_wb_pipe_i.instr_valid && ex_wb_pipe_i.lsu_en) && ctrl_fsm_o.halt_wb
                       |->
-                      wpt_match_wb_i)
+                      |wpt_match_wb_i)
         else `uvm_error("controller", "LSU in WB halted without watchpoint trigger match")
     // Check that debug is always taken when a watchpoint trigger is arrives in WB
     // The watchpoint is halted during its first cycle in WB, thus checking during FUNCTIONAL state only,
@@ -1101,7 +1225,7 @@ generate
     // the controller will go back to FUNCTIONAL.
     a_wpt_debug_entry:
       assert property (@(posedge clk) disable iff (!rst_n)
-                      (ex_wb_pipe_i.instr_valid && wpt_match_wb_i) && (ctrl_fsm_cs == FUNCTIONAL)
+                      (ex_wb_pipe_i.instr_valid && |wpt_match_wb_i) && (ctrl_fsm_cs == FUNCTIONAL)
                       |->
                       (abort_op_wb_i && (ctrl_fsm_ns == DEBUG_TAKEN)))
         else `uvm_error("controller", "Debug not entered on a WPT match")
@@ -1150,6 +1274,13 @@ generate
                       (ctrl_fsm_cs == DEBUG_TAKEN) &&
                       (debug_cause_q == DBG_CAUSE_STEP))
         else `uvm_error("controller", "Wrong debug cause when taking an interrupt during single stepping")
+
+    a_no_sleep_during_debug:
+      assert property (@(posedge clk) disable iff (!rst_n)
+                      (ctrl_fsm_cs == SLEEP)
+                      |->
+                      !debug_mode_q)
+      else `uvm_error("controller", "Debug mode during SLEEP not allowed")
 
 if (CLIC) begin
     // While single stepping, debug cause shall be set to 'trigger' if a pointer for a SHV CLIC interrupt arrives in WB

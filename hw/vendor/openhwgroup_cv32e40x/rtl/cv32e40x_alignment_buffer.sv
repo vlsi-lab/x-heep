@@ -33,6 +33,9 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
   // Controller fsm inputs
   input  ctrl_fsm_t      ctrl_fsm_i,
 
+  // Privilige level control
+  input privlvlctrl_t    priv_lvl_ctrl_i,
+
   // Branch control
   input  logic [31:0]    branch_addr_i,
   output logic           prefetch_busy_o,
@@ -100,10 +103,12 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
   // Error propagation signals for bus, mpu and alignment checker (pointers)
   logic bus_err_unaligned, bus_err;
   mpu_status_e mpu_status_unaligned, mpu_status;
-  align_status_e align_status_unaligned, align_status;
 
   // resp_valid gated while flushing
   logic resp_valid_gated;
+
+  // Privilege level for the IF stage
+  privlvl_t instr_priv_lvl_q;
 
   // CLIC vectoring
   // Flag for signalling that results is a CLIC function pointer
@@ -130,12 +135,12 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
                          (outstanding_cnt_q < 2)                                     &&
                          !(ptr_fetch_accepted_q && !ctrl_fsm_i.pc_set)               && // No fetch until next pc_set after accepted pointer fetches
                          (((instr_cnt_q - pop_q) == 'd0)                             ||
-                         ((instr_cnt_q - pop_q) == 'd1 && outstanding_cnt_q == 2'd0) ||
+                         ((instr_cnt_q - pop_q) == 'd1 && outstanding_cnt_q == ALBUF_CNT_WIDTH'(0)) ||
                          ctrl_fsm_i.pc_set);
 
 
   // Busy if we expect any responses, or we have an active fetch_valid_o
-  assign prefetch_busy_o = (outstanding_cnt_q != 3'b000)|| fetch_valid_o;
+  assign prefetch_busy_o = (outstanding_cnt_q != ALBUF_CNT_WIDTH'(0))|| fetch_valid_o;
 
   // Indicate that there will be one pending transaction in the next cycle
   assign one_txn_pend_n = outstanding_cnt_n == ALBUF_CNT_WIDTH'(1);
@@ -147,8 +152,8 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
   //////////////////
   // FIFO signals //
   //////////////////
-  inst_resp_t [0:ALBUF_DEPTH-1]  resp_q;
-  logic [0:ALBUF_DEPTH-1]        valid_n,   valid_int,   valid_q;
+  inst_resp_t [ALBUF_DEPTH-1:0]  resp_q;
+  logic [ALBUF_DEPTH-1:0]        valid_n,   valid_int,   valid_q;
   inst_resp_t resp_n;
 
   // Read/write pointer for FIFO
@@ -167,7 +172,6 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
   assign instr        = (valid_q[rptr]) ? resp_q[rptr].bus_resp.rdata : resp_i.bus_resp.rdata;
   assign bus_err      = (valid_q[rptr]) ? resp_q[rptr].bus_resp.err   : resp_i.bus_resp.err;
   assign mpu_status   = (valid_q[rptr]) ? resp_q[rptr].mpu_status     : resp_i.mpu_status;
-  assign align_status = (valid_q[rptr]) ? resp_q[rptr].align_status   : resp_i.align_status;
 
 
   // Unaligned instructions will either be split across index 0 and 1, or index 0 and incoming data
@@ -190,10 +194,9 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
                                    !(instr_is_clic_ptr_o || instr_is_mret_ptr_o || instr_is_tbljmp_ptr_o);
 
 
-  // Set mpu_status, align_status and bus error for unaligned instructions
+  // Set mpu_status and bus error for unaligned instructions
   always_comb begin
     mpu_status_unaligned = MPU_OK;
-    align_status_unaligned = ALIGN_OK;
     bus_err_unaligned = 1'b0;
     // There is valid data in q1 (valid q0 is implied)
     if(valid_q[rptr2]) begin
@@ -204,17 +207,11 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
           mpu_status_unaligned = MPU_RE_FAULT;
         end
 
-        if((resp_q[rptr2].align_status != ALIGN_OK) || (resp_q[rptr].align_status != ALIGN_OK)) begin
-          align_status_unaligned = ALIGN_RE_ERR;
-        end
-
         // Bus error from either entry
         bus_err_unaligned = (resp_q[rptr2].bus_resp.err || resp_q[rptr].bus_resp.err);
       end else begin
         // Compressed, use only mpu_status from q0
         mpu_status_unaligned = resp_q[rptr].mpu_status;
-
-        align_status_unaligned = resp_q[rptr].align_status;
 
         // bus error from q0
         bus_err_unaligned    = resp_q[rptr].bus_resp.err;
@@ -229,16 +226,12 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
             mpu_status_unaligned = MPU_RE_FAULT;
           end
 
-          if((resp_q[rptr].align_status != ALIGN_OK) || (resp_i.align_status != ALIGN_OK)) begin
-            align_status_unaligned = ALIGN_RE_ERR;
-          end
-
           // Bus error from q0 and resp_i
           bus_err_unaligned = (resp_q[rptr].bus_resp.err || resp_i.bus_resp.err);
         end else begin
           // There is unaligned data in q0 and it is compressed
           mpu_status_unaligned = resp_q[rptr].mpu_status;
-          align_status_unaligned = resp_q[rptr].align_status;
+
           // Bus error from q0
           bus_err_unaligned = resp_q[rptr].bus_resp.err;
         end
@@ -246,7 +239,6 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
         // There is no data in the buffer, use input
         mpu_status_unaligned   = resp_i.mpu_status;
         bus_err_unaligned      = resp_i.bus_resp.err;
-        align_status_unaligned = resp_i.align_status;
       end
     end
   end
@@ -258,7 +250,6 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
     instr_instr_o.bus_resp.rdata = instr;
     instr_instr_o.bus_resp.err   = bus_err;
     instr_instr_o.mpu_status     = mpu_status;
-    instr_instr_o.align_status   = align_status;
     instr_valid_o = 1'b0;
 
     // Invalidate output if we get killed
@@ -269,7 +260,6 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
       instr_instr_o.bus_resp.rdata = instr_unaligned;
       instr_instr_o.bus_resp.err   = bus_err_unaligned;
       instr_instr_o.mpu_status     = mpu_status_unaligned;
-      instr_instr_o.align_status   = align_status_unaligned;
 
       if (!valid) begin
         // No instruction valid
@@ -304,7 +294,13 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
     // Write response and update valid bit and write pointer
     if (resp_valid_gated) begin
       // Increase write pointer, wrap to zero if at last entry
-      wptr_n   = wptr < (ALBUF_DEPTH-1) ? wptr + ALBUF_CNT_WIDTH'(1) : ALBUF_CNT_WIDTH'(0);
+      if (wptr < (ALBUF_DEPTH-1)) begin
+        wptr_n =  wptr + ALBUF_CNT_WIDTH'(1);
+      end
+      else begin
+        wptr_n = ALBUF_CNT_WIDTH'(0);
+      end
+
       // Set fifo and valid write data
       resp_n   = resp_i;
       valid_int[wptr] = 1'b1;
@@ -331,7 +327,12 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
       end
 
       // Advance FIFO one step, wrap if at last entry
-      rptr_n = rptr < (ALBUF_DEPTH-1) ? rptr + ALBUF_CNT_WIDTH'(1) : ALBUF_CNT_WIDTH'(0);
+      if (rptr < (ALBUF_DEPTH-1)) begin
+        rptr_n = rptr + ALBUF_CNT_WIDTH'(1);
+      end
+      else begin
+        rptr_n = ALBUF_CNT_WIDTH'(0);
+      end
     end else begin
       // aligned case
       if (aligned_is_compressed) begin
@@ -343,7 +344,12 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
         addr_n = {addr_incr[31:2], 2'b00};
 
         // Advance FIFO one step, wrap if at last entry
-        rptr_n = rptr < (ALBUF_DEPTH-1) ? rptr + ALBUF_CNT_WIDTH'(1) : ALBUF_CNT_WIDTH'(0);
+        if (rptr < (ALBUF_DEPTH-1)) begin
+          rptr_n = rptr + ALBUF_CNT_WIDTH'(1);
+        end
+        else begin
+          rptr_n = ALBUF_CNT_WIDTH'(0);
+        end
       end
     end
 
@@ -356,7 +362,14 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
   end
 
   // rptr2 will always be one higher than rptr
-  assign rptr2 = (rptr < (ALBUF_DEPTH-1)) ? rptr + ALBUF_CNT_WIDTH'(1) : ALBUF_CNT_WIDTH'(0);
+  always_comb begin
+    if (rptr < (ALBUF_DEPTH-1)) begin
+      rptr2 = rptr + ALBUF_CNT_WIDTH'(1);
+    end
+    else begin
+      rptr2 = ALBUF_CNT_WIDTH'(0);
+    end
+  end
 
   // Counting instructions in FIFO
   always_comb begin
@@ -617,7 +630,32 @@ module cv32e40x_alignment_buffer import cv32e40x_pkg::*;
   assign fetch_ptr_access_o = (ctrl_fsm_i.pc_set && (ctrl_fsm_i.pc_set_clicv || ctrl_fsm_i.pc_set_tbljmp));
 
   // Set privilege level to prefetcher
-  assign fetch_priv_lvl_o = PRIV_LVL_M;
+  // Privilege level must be updated immediatly to allow the
+  // IF stage to do access permission checks with the correct privilege level
+  //
+  // When an mret is in the ID stage, a jump is performed and the privilege level may be changed.
+  // When the privilege level changes, priv_lvl_ctrl_i.priv_lvl_set is 1, and the new privilege level
+  // is visible on priv_lvl_ctrl_i.priv_lvl. When priv_lvl_set is 0, the privilege level
+  // as seen from the WB stage (flop output) is visible on priv_lvl_ctrl_i.priv_lvl.
+  //
+  // This means that in the time between the mret jump and privilege level change in ID and the time when
+  // the mret retires in WB, the old privilege level is visible on pvi_lvl_ctrl_i.priv_lvl.
+  // To ensure the correct privilege level for prefetches, the alignment_buffer remembers the last commanded
+  // privilege level in the instr_priv_lvl_q flops.
+  assign fetch_priv_lvl_o = priv_lvl_ctrl_i.priv_lvl_set ? priv_lvl_ctrl_i.priv_lvl:
+                            instr_priv_lvl_q;
+
+  // Privilege level for the IF stage
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (!rst_n) begin
+      instr_priv_lvl_q <= PRIV_LVL_M;
+    end
+    else begin
+      if (priv_lvl_ctrl_i.priv_lvl_set) begin
+        instr_priv_lvl_q <= priv_lvl_ctrl_i.priv_lvl;
+      end
+    end
+  end
 
   // Set privilege level to IF stage
   assign instr_priv_lvl_o = fetch_priv_lvl_i;

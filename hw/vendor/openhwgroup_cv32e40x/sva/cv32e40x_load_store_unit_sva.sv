@@ -43,7 +43,7 @@ module cv32e40x_load_store_unit_sva
    input mpu_status_e lsu_mpu_status_1_o, // WB mpu status
    input align_status_e lsu_align_status_1_o,
    input ex_wb_pipe_t ex_wb_pipe_i,
-   if_c_obi.monitor  m_c_obi_data_if,
+   cv32e40x_if_c_obi.monitor  m_c_obi_data_if,
    input logic       xif_req,
    input logic       xif_res_q,
    input logic       id_valid,
@@ -52,8 +52,8 @@ module cv32e40x_load_store_unit_sva
    input logic       lsu_first_op_0_o,
    input logic       valid_0_i,
    input logic       ready_0_i,
-   input logic       trigger_match_0_i,
-   input logic       lsu_wpt_match_1_o,
+   input logic [31:0] trigger_match_0_i,
+   input logic [31:0] lsu_wpt_match_1_o,
    input trans_req_t trans,
    input logic       bus_trans_valid,
    input logic       mpu_err_i,
@@ -119,6 +119,19 @@ module cv32e40x_load_store_unit_sva
 
   a_no_spurious_rvalid :
     assert property(p_no_spurious_rvalid) else `uvm_error("load_store_unit", "Assertion a_no_spurious_rvalid failed")
+
+  // Check that the address/we/be/atop does not contain X when request is sent
+  property p_address_phase_signals_defined;
+    @(posedge clk) (m_c_obi_data_if.s_req.req == 1'b1) |->
+                    (!($isunknown(m_c_obi_data_if.req_payload.addr) ||
+                      $isunknown(m_c_obi_data_if.req_payload.we)    ||
+                      $isunknown(m_c_obi_data_if.req_payload.be)    ||
+                      $isunknown(m_c_obi_data_if.req_payload.atop)));
+  endproperty
+
+  a_address_phase_signals_defined :
+    assert property(p_address_phase_signals_defined)
+      else `uvm_error("load_store_unit", "Assertion a_address_phase_signals_defined failed")
 
   // No transaction allowd if EX is halted or killed
   a_lsu_halt_kill:
@@ -231,13 +244,13 @@ if (DEBUG) begin
   assert property (@(posedge clk) disable iff (!rst_n)
                   (cnt_q == 2'b00) && (ex_wb_pipe_i.lsu_en && ex_wb_pipe_i.instr_valid)
                   |->
-                  $past(lsu_wpt_match_1_o) && (ctrl_fsm_cs == DEBUG_TAKEN))
+                  |$past(lsu_wpt_match_1_o) && (ctrl_fsm_cs == DEBUG_TAKEN))
       else `uvm_error("load_store_unit", "Illegal cause of cnt_q=0 while a valid LSU instruction is in WB")
 
   // MPU errors and watchpoint triggers cannot happen at the same time
   a_mpuerr_wpt_unique:
   assert property (@(posedge clk) disable iff (!rst_n)
-                  lsu_wpt_match_1_o
+                  |lsu_wpt_match_1_o
                   |->
                   !(lsu_mpu_status_1_o != MPU_OK))
       else `uvm_error("load_store_unit", "MPU error and watchpoint trigger not unique")

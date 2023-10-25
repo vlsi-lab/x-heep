@@ -77,8 +77,21 @@ module cv32e40x_rvfi_sva
    input logic             pc_mux_exception,
    input logic             pc_mux_debug,
    input logic             in_trap_clr,
-   input logic             wb_valid_lastop
+   input logic             wb_valid_lastop,
+   input logic             etrigger_in_wb_i,
 
+   cv32e40x_if_c_obi.monitor  m_c_obi_data_if,
+   input logic [32*NMEM-1:0]  rvfi_mem_addr,
+   input logic [ 4*NMEM-1:0]  rvfi_mem_rmask,
+   input logic [ 4*NMEM-1:0]  rvfi_mem_wmask,
+   input logic [32*NMEM-1:0]  rvfi_mem_rdata,
+   input logic [32*NMEM-1:0]  rvfi_mem_wdata,
+   input logic [ 1*NMEM-1:0]  rvfi_mem_exokay,
+   input logic [ 1*NMEM-1:0]  rvfi_mem_err,
+   input logic [ 3*NMEM-1:0]  rvfi_mem_prot,
+   input logic [ 6*NMEM-1:0]  rvfi_mem_atop,
+   input logic [ 2*NMEM-1:0]  rvfi_mem_memtype,
+   input logic [ 1*NMEM-1:0]  rvfi_mem_dbg
 );
 
   if (CLIC) begin
@@ -110,6 +123,20 @@ module cv32e40x_rvfi_sva
   else
     `uvm_error("rvfi",
       $sformatf("Every irq_ack should be followed by the corresponding rvfi_intr"));
+
+  // rvfi_intr.intr shall also have rvfi_intr.exception or rvfi_intr.interrupt set at the same time
+  property p_rvfi_intr_interrupt_exception;
+    @(posedge clk_i) disable iff (!rst_ni)
+    rvfi_intr.intr
+      |->
+        (rvfi_intr.interrupt ||
+        rvfi_intr.exception);
+  endproperty : p_rvfi_intr_interrupt_exception
+
+  a_rvfi_intr_interrupt_exception: assert property (p_rvfi_intr_interrupt_exception)
+  else
+    `uvm_error("rvfi",
+      $sformatf("rvfi_intr.intr set without rvfi_intr.exception or rvfi_intr.interrupt"));
 
 
   // Sequence used to locate rvfi_valid following rvfi_valid with prereq set
@@ -151,7 +178,7 @@ if (DEBUG) begin
   // Helper signal, indicating debug cause
   // Special case for debug entry from debug mode caused by EBREAK as it is not captured by debug_cause_i
   logic [2:0] debug_cause_int;
-  assign debug_cause_int = ebreak_in_wb_i ? 3'h1 : ctrl_fsm_i.debug_cause;
+  assign debug_cause_int = (ctrl_fsm_i.debug_mode && ebreak_in_wb_i) ? 3'h1 : ctrl_fsm_i.debug_cause;
 
   // Check that dbg_ack results in RVFI capturing a debug_cause
   // Ideally, we should assert that every dbg_ack eventually leads to rvfi_dbg,
@@ -201,18 +228,24 @@ if (DEBUG) begin
                     rvfi_dbg == $past(rvfi_trap.debug_cause))
     else `uvm_error("rvfi", "rvfi_trap.debug_cause not consistent with rvfi_dbg in following retired instruction")
 
-  // Check that rvfi_trap always indicate single step if rvfi_trap[2:1] == 2'b11
+  // Check that rvfi_trap always indicate single step or etrigger if rvfi_trap[2:1] == 2'b11
   a_rvfi_single_step_trap:
   assert property (@(posedge clk_i) disable iff (!rst_ni)
-                    rvfi_trap.exception && rvfi_trap.debug |-> rvfi_trap.debug_cause == DBG_CAUSE_STEP)
-    else `uvm_error("rvfi", "rvfi_trap[2:1] == 2'b11, but debug cause bits do not indicate single stepping")
+                    rvfi_valid && rvfi_trap.exception && rvfi_trap.debug
+                    |->
+                    (rvfi_trap.debug_cause == DBG_CAUSE_STEP)
+                    or
+                    (rvfi_trap.debug_cause == DBG_CAUSE_TRIGGER) && $past(etrigger_in_wb_i))
+    else `uvm_error("rvfi", "rvfi_trap[2:1] == 2'b11, but debug cause bits do not indicate single stepping or trigger")
 
   // Check that dcsr.cause and mcause exception align with rvfi_trap when rvfi_trap[2:1] == 2'b11
   // rvfi_intr should also always be set in this case
   a_rvfi_trap_step_exception:
   assert property (@(posedge clk_i) disable iff (!rst_ni)
-                    s_goto_next_rvfi_valid(rvfi_trap.exception && rvfi_trap.debug) |->
-                    (rvfi_dbg == DBG_CAUSE_STEP) && (rvfi_csr_dcsr_rdata[8:6] == DBG_CAUSE_STEP) &&
+                    s_goto_next_rvfi_valid(rvfi_trap.exception && rvfi_trap.debug)
+                    |->
+                    ((rvfi_dbg == DBG_CAUSE_STEP) && (rvfi_csr_dcsr_rdata[8:6] == DBG_CAUSE_STEP) ||
+                     (rvfi_dbg == DBG_CAUSE_TRIGGER) && (rvfi_csr_dcsr_rdata[8:6] == DBG_CAUSE_TRIGGER)) &&
                     (rvfi_csr_mcause_rdata[5:0] == $past(rvfi_trap.exception_cause)) &&
                     rvfi_intr.intr)
     else `uvm_error("rvfi", "dcsr.cause, mcause and rvfi_intr not as expected following an exception during single step")
@@ -351,9 +384,29 @@ end
                     (in_trap[STAGE_IF] && (pc_wb_i != pc_if_i))))
     else `uvm_error("rvfi", "More than one in_trap at the same time")
 
-  /* TODO: Add back in.
-     Currently, the alignment buffer can interpret pointers as compressed instructions and pass on two "instructions" from the IF stage.
-     cv32e40x_rvfi_instr_obi will not be in sync with the alignment buffer until this is fixed. See https://github.com/openhwgroup/cv32e40x/issues/704
+  // Check that rvfi_valid and rvfi_trap.debug is correctly set for single step.
+  //
+  a_single_step_rvfi_valid_trap:
+  assert property (@(posedge clk_i) disable iff (!rst_ni)
+                  pc_mux_debug &&                                // Debug entry (DEBUG_TAKEN)
+                  (ctrl_fsm_i.debug_cause == DBG_CAUSE_STEP) &&  // due to single step
+                  $past(wb_valid_lastop)                         // An instruction was retired previous cycle
+                  |->
+                  (rvfi_valid && rvfi_trap.debug))               // Must set rvfi_valid and trap.debug
+    else `uvm_error("rvfi", "No rvfi_valid or rvfi_trap for single step.")
+
+  // Check that rvfi_valid and rvfi_trap.debug is correctly set for etrigger.
+  //
+  a_etrigger_rvfi_valid_trap:
+  assert property (@(posedge clk_i) disable iff (!rst_ni)
+                  pc_mux_debug &&                                         // Debug entry (DEBUG_TAKEN)
+                  (ctrl_fsm_i.debug_cause == DBG_CAUSE_TRIGGER) &&        // due to trigger
+                  $past(wb_valid_lastop)                                  // Triggers other than etrigger halts pipeline, this must be etrigger
+                  |->
+                  (rvfi_valid && rvfi_trap.debug && rvfi_trap.exception)) // Must set rvfi_valid and trap.debug + trap.exception
+
+    else `uvm_error("rvfi", "No rvfi_valid or rvfi_trap for etrigger.")
+
 
   // Check that cv32e40x_rvfi_instr_obi tracks alignment buffer
   a_rvfi_instr_obi_addr:
@@ -394,8 +447,412 @@ end
                      prefetch_valid_if_i && prefetch_ready_if_i && !prefetch_compressed_if_i && (prefetch_addr_if_i[1:0] != 2'b00 && (obi_instr_if.resp_payload.mpu_status == MPU_OK)) |->
                      obi_instr_fifo_q[obi_instr_rptr_q].req_payload.prot == obi_instr_fifo_q[obi_instr_rptr_q_inc].req_payload.prot)
       else `uvm_error("rvfi", "rvfi_instr_obi prot not the same for split transfers")
-  */
+
+
+  // The following assertions and support logic check that memory transfers reported on rvfi_mem are consistent with LSU OBI transfers
+
+  localparam int unsigned OBI_FIFO_SIZE = 32; // FIFO needs to be able to hold at least 2*13 memory transfers (because Zc can cause 13 transfers, and these can be split misaligned)
+  localparam int unsigned MAX_NUM_MEMOP = 13; // This must be set to the maximum number of memory operations per retired instruction. If set too high it will result in unreachable covers
+
+    typedef struct packed {
+      bit               valid;
+      bit               ld_str_blocked;
+      bit [32*NMEM-1:0] addr;
+      bit [ 4*NMEM-1:0] rmask;
+      bit [ 4*NMEM-1:0] wmask;
+      bit [32*NMEM-1:0] rdata;
+      bit [32*NMEM-1:0] wdata;
+      bit [ 1*NMEM-1:0] exokay;
+      bit [ 1*NMEM-1:0] err;
+      bit [ 3*NMEM-1:0] prot;
+      bit [ 6*NMEM-1:0] atop;
+      bit [ 2*NMEM-1:0] memtype;
+      bit [ 1*NMEM-1:0] dbg;
+    } rvfi_mem_t;
+
+    // Return number of memory operations based on rvfi_mem_rmaks/wmask
+    function automatic bit [$clog2(NMEM)-1:0] get_num_memop(bit [4*NMEM-1:0] rvfi_mem_mask);
+
+      bit [$clog2(NMEM)-1:0] num_memop = 0;
+
+      for (int i=0; i<NMEM; i++) begin
+        if(|rvfi_mem_mask[i*4 +: 4]) begin
+          num_memop++;
+        end
+      end
+
+      return num_memop;
+    endfunction : get_num_memop
+
+    // Generate bitmask from byte-enables
+    function automatic bit [31:0] get_bitmask(bit [3:0] be);
+      bit [31:0] mask;
+      mask[7:0]   = {8{be[0]}};
+      mask[15:8]  = {8{be[1]}};
+      mask[23:16] = {8{be[2]}};
+      mask[31:24] = {8{be[3]}};
+      return mask;
+    endfunction : get_bitmask
+
+    // Identify split tranfers based on address LSB's and be
+    function automatic bit split_xfer(bit [1:0] addr_lsb, bit [3:0] be);
+      if((addr_lsb + $countones(be)) > 4) begin
+        return 1'b1;
+      end
+      else begin
+        return 1'b0;
+      end
+    endfunction : split_xfer
+
+    // Helper signals to identify reads and writes on RVFI
+    bit [MAX_NUM_MEMOP-1:0] rvfi_mem_xfer;
+    bit [MAX_NUM_MEMOP-1:0] rvfi_mem_read;
+    bit [MAX_NUM_MEMOP-1:0] rvfi_mem_write;
+    bit                     split_transfer;
+
+    // OBI FIFOs and pointers
+    obi_data_req_t  [OBI_FIFO_SIZE-1:0] data_obi_req_fifo;
+    obi_data_resp_t [OBI_FIFO_SIZE-1:0] data_obi_resp_fifo;
+    bit [$clog2(OBI_FIFO_SIZE)-1:0] rd_ptr, rd_ptr_inc, rd_ptr_n;
+    bit [$clog2(OBI_FIFO_SIZE)-1:0] wr_req_ptr, wr_resp_ptr;
+
+    // Indicate number of memory operations per instruction
+    bit [$clog2(NMEM):0]                       num_memop;
+
+    rvfi_mem_t rvfi_mem, rvfi_mem_dly, rvfi_mem_exp;
+
+    assign rvfi_mem.valid = rvfi_valid;
+    assign rvfi_mem.ld_str_blocked = rvfi_trap.trap && (
+                                                        (rvfi_trap.exception &&
+                                                         ((rvfi_trap.exception_cause == 6'h4) ||   // Load Address Misaligned
+                                                          (rvfi_trap.exception_cause == 6'h5) ||   // Load Access Fault
+                                                          (rvfi_trap.exception_cause == 6'h6) ||   // Store/AMO Address Misaligned
+                                                          (rvfi_trap.exception_cause == 6'h7))) || // Store/AMO Access Fault
+                                                        (rvfi_trap.debug &&
+                                                         ((rvfi_trap.debug_cause == 3'h1) ||   // Debug Breakpoint
+                                                          (rvfi_trap.debug_cause == 3'h2))));  // Debug trigger match
+
+    assign rvfi_mem.addr    = rvfi_mem_addr;
+    assign rvfi_mem.rmask   = rvfi_mem_rmask;
+    assign rvfi_mem.wmask   = rvfi_mem_wmask;
+    assign rvfi_mem.rdata   = rvfi_mem_rdata;
+    assign rvfi_mem.wdata   = rvfi_mem_wdata;
+    assign rvfi_mem.exokay  = rvfi_mem_exokay;
+    assign rvfi_mem.err     = rvfi_mem_err;
+    assign rvfi_mem.prot    = rvfi_mem_prot;
+    assign rvfi_mem.atop    = rvfi_mem_atop;
+    assign rvfi_mem.memtype = rvfi_mem_memtype;
+    assign rvfi_mem.dbg     = rvfi_mem_dbg;
+
+    localparam MAX_GNT_DLY = 2;
+
+    bit [$clog2(MAX_GNT_DLY+1):0]   obi_gnt_dly_cnt;
+    bit                             obi_gnt_delay_ok;
+
+    // Keep track of cycles with obi request but no grant
+    always_ff @(posedge clk_i, negedge rst_ni) begin
+      if(!rst_ni) begin
+        obi_gnt_dly_cnt <= '0;
+      end else begin
+        if(m_c_obi_data_if.s_req.req && !m_c_obi_data_if.s_gnt.gnt) begin
+          if (obi_gnt_dly_cnt <= MAX_GNT_DLY) begin
+            obi_gnt_dly_cnt <= obi_gnt_dly_cnt + 1'b1;
+          end
+        end
+        else begin
+          obi_gnt_dly_cnt <= '0;
+        end
+      end
+    end
+
+    // Indicate that the OBI grant delay is small enough to allow the OBI FIFO to be populated
+    // before rvfi_mem_dly.valid is set
+    assign obi_gnt_delay_ok = obi_gnt_dly_cnt <= MAX_GNT_DLY;
+
+    // Generate delayed version of rvfi_mem
+    // Needed because write buffer can cause OBI tranfers to be accepted after it's signaled on RVFI
+    always_ff @(posedge clk_i, negedge rst_ni) begin
+      if(!rst_ni) begin
+        rvfi_mem_dly <= '0;
+      end
+      else begin
+        rvfi_mem_dly <= $past(rvfi_mem, MAX_GNT_DLY-1);
+      end
+    end
+
+  // FIFOs for OBI transfers
+  always_ff @(posedge clk_i, negedge rst_ni) begin
+    if(!rst_ni) begin
+      data_obi_req_fifo  <= '0;
+      data_obi_resp_fifo <= '0;
+      wr_req_ptr  <= '0;
+      wr_resp_ptr <= '0;
+      rd_ptr      <= '0;
+    end
+    else begin
+
+      // Update read pointer
+      rd_ptr <= rd_ptr_n;
+
+      // Populate OBI req FIFO
+      if (m_c_obi_data_if.s_req.req && m_c_obi_data_if.s_gnt.gnt) begin
+        data_obi_req_fifo[wr_req_ptr] <= m_c_obi_data_if.req_payload;
+        wr_req_ptr <= wr_req_ptr + 1'b1;
+      end
+
+      // Populate OBI resp FIFO
+      if (m_c_obi_data_if.s_rvalid.rvalid) begin
+        data_obi_resp_fifo[wr_resp_ptr] <= m_c_obi_data_if.resp_payload;
+        wr_resp_ptr <= wr_resp_ptr + 1'b1;
+      end
+    end
+  end
+
+  // Pointer to next OBI transfer. Used for split misaligned
+  assign rd_ptr_inc = rd_ptr + 1'b1;
+
+  // Extract number of memory operation in retired instruction
+  assign num_memop = get_num_memop(rvfi_mem_dly.wmask) + get_num_memop(rvfi_mem_dly.rmask);
+
+  // Assumption here is that if the first transfer is a split, the following ones will be as well.
+  // The reasoning is that Zc push/pop will always do word read/writes, meaning that if the first is split, so will the rest
+  assign split_transfer = split_xfer(rvfi_mem_dly.addr[1:0], rvfi_mem_dly.wmask[3:0] | rvfi_mem_dly.rmask[3:0]);
+
+  // Increment read pointer based on memory operations in the retired instruction
+  always_comb begin
+    rd_ptr_n = rd_ptr;
+
+    if (|rvfi_mem_xfer) begin
+      if(split_transfer) begin
+        // For split transfers, we'll consume 2 OBI tranfers per memory operation
+        rd_ptr_n = rd_ptr + ($clog2(OBI_FIFO_SIZE))'(2*num_memop);
+      end
+      else begin
+        rd_ptr_n = rd_ptr + ($clog2(OBI_FIFO_SIZE))'(1*num_memop);
+      end
+    end
+  end
+
+  // FIFO depth and assertions are designed to support up to MAX_NUM_MEMOP memory operations per retired instruction.
+  // Make sure this assumption holds
+  a_rvfi_mem_max_num_memop:
+    assert property (@(posedge clk_i) disable iff (!rst_ni)
+                     |rvfi_mem_xfer |-> num_memop <= MAX_NUM_MEMOP)
+        else `uvm_error("rvfi", "Memory operations > MAX_NUM_MEMOP. Potential overflow in SVA support logic.")
+
+  genvar i_memop;
+  generate
+
+    for(i_memop = 0; i_memop < MAX_NUM_MEMOP; i_memop++) begin: rvfi_mem_asrt
+
+      assign rvfi_mem_read[i_memop]  = rvfi_mem_dly.valid && (|rvfi_mem_dly.rmask[(4*i_memop) +: 4]);
+      assign rvfi_mem_write[i_memop] = rvfi_mem_dly.valid && (|rvfi_mem_dly.wmask[(4*i_memop) +: 4]);
+      assign rvfi_mem_xfer[i_memop]  = rvfi_mem_read[i_memop] || rvfi_mem_write[i_memop];
+
+      // Helper signals
+      bit [3:0]  exp_rvfi_mem_mask;
+      bit [31:0] split_1st_wdata;
+      bit [31:0] split_2nd_wdata;
+      bit [31:0] split_1st_rdata;
+      bit [31:0] split_2nd_rdata;
+      bit        split_1st_err;
+      bit        split_2nd_err;
+      bit [2:0]  split_2nd_shift;
+
+      bit [$clog2(OBI_FIFO_SIZE)-1:0] rd_ptr_memop, rd_ptr_memop_inc;
+
+      // Assemble expected transaction on RVFI, based on OBI FIFO
+      always_comb begin
+
+        rvfi_mem_exp.addr    [32*i_memop +: 32] = '0;
+        rvfi_mem_exp.rmask   [ 4*i_memop +:  4] = '0;
+        rvfi_mem_exp.wmask   [ 4*i_memop +:  4] = '0;
+        rvfi_mem_exp.rdata   [32*i_memop +: 32] = '0;
+        rvfi_mem_exp.wdata   [32*i_memop +: 32] = '0;
+        rvfi_mem_exp.exokay  [ 1*i_memop +:  1] = '0;
+        rvfi_mem_exp.err     [ 1*i_memop +:  1] = '0;
+        rvfi_mem_exp.prot    [ 3*i_memop +:  3] = '0;
+        rvfi_mem_exp.atop    [ 6*i_memop +:  6] = '0;
+        rvfi_mem_exp.memtype [ 2*i_memop +:  2] = '0;
+        rvfi_mem_exp.dbg     [ 1*i_memop +:  1] = '0;
+
+        exp_rvfi_mem_mask                    = '0;
+        split_2nd_shift                      = '0;
+        split_1st_wdata                      = '0;
+        split_2nd_wdata                      = '0;
+        split_1st_rdata                      = '0;
+        split_2nd_rdata                      = '0;
+        split_1st_err                        = '0;
+        split_2nd_err                        = '0;
+
+        rd_ptr_memop                         = '0;
+        rd_ptr_memop_inc                     = '0;
+
+        if (rvfi_mem_xfer[i_memop]) begin
+
+          if(split_transfer) begin
+            // Split misaligned transfer(s)
+
+            rd_ptr_memop      = rd_ptr + ($clog2(OBI_FIFO_SIZE))'(2*i_memop); // Split transfers are reported in one memory operation on rvfi_mem, but results in 2 OBI transfers.
+            rd_ptr_memop_inc  = rd_ptr_memop + 1'b1;
+
+            split_2nd_shift   = 3'h4 - data_obi_req_fifo[rd_ptr_memop].addr[1:0];
+
+            exp_rvfi_mem_mask = (data_obi_req_fifo[rd_ptr_memop].be     >> data_obi_req_fifo[rd_ptr_memop].addr[1:0]) |
+                                (data_obi_req_fifo[rd_ptr_memop_inc].be << split_2nd_shift);
+
+            // Extract data from the two OBI transfers
+            split_1st_wdata    = data_obi_req_fifo[rd_ptr_memop].wdata     & get_bitmask(data_obi_req_fifo[rd_ptr_memop].be);
+            split_2nd_wdata    = data_obi_req_fifo[rd_ptr_memop_inc].wdata & get_bitmask(data_obi_req_fifo[rd_ptr_memop_inc].be);
+
+            split_1st_rdata    = data_obi_resp_fifo[rd_ptr_memop].rdata     & get_bitmask(data_obi_req_fifo[rd_ptr_memop].be);
+            split_2nd_rdata    = data_obi_resp_fifo[rd_ptr_memop_inc].rdata & get_bitmask(data_obi_req_fifo[rd_ptr_memop_inc].be);
+
+            split_1st_err    = data_obi_resp_fifo[rd_ptr_memop].err[0] && !data_obi_req_fifo[rd_ptr_memop].memtype[0];
+            split_2nd_err    = data_obi_resp_fifo[rd_ptr_memop_inc].err[0] && !data_obi_req_fifo[rd_ptr_memop_inc].memtype[0];
+
+            // Align rdata/wdata to correspond to expected rdata/wdata on RVFI
+            rvfi_mem_exp.wdata[(32*i_memop) +: 32] = split_1st_wdata >> (8 * data_obi_req_fifo[rd_ptr_memop].addr[1:0]) |
+                                                     split_2nd_wdata << (8 * split_2nd_shift);
+
+            rvfi_mem_exp.rdata[(32*i_memop) +: 32] = split_1st_rdata >> (8 * data_obi_req_fifo[rd_ptr_memop].addr[1:0]) |
+                                                     split_2nd_rdata << (8 * split_2nd_shift);
+
+            rvfi_mem_exp.err[( 1*i_memop) +:  1] = split_1st_err | split_2nd_err;
+
+          end
+          else begin
+
+            rd_ptr_memop                           = rd_ptr + ($clog2(OBI_FIFO_SIZE))'(i_memop);
+
+            exp_rvfi_mem_mask                      = data_obi_req_fifo[rd_ptr_memop].be >> data_obi_req_fifo[rd_ptr_memop].addr[1:0];
+
+            // Align rdata/wdata to correspond to expected rdata/wdata on RVFI
+            rvfi_mem_exp.wdata[(32*i_memop) +: 32] = data_obi_req_fifo[rd_ptr_memop].wdata >> (8 * data_obi_req_fifo[rd_ptr_memop].addr[1:0]);
+
+            rvfi_mem_exp.rdata[(32*i_memop) +: 32] = data_obi_resp_fifo[rd_ptr_memop].rdata >> (8 * data_obi_req_fifo[rd_ptr_memop].addr[1:0]);
+
+            rvfi_mem_exp.err  [(1*i_memop) +:   1] = data_obi_resp_fifo[rd_ptr_memop].err[0] && !data_obi_req_fifo[rd_ptr_memop].memtype[0];
+
+          end
+
+          // Addr and prot are equal for both transfers in a split transfer
+          rvfi_mem_exp.addr   [(32*i_memop) +: 32] = data_obi_req_fifo[rd_ptr_memop].addr;
+          rvfi_mem_exp.prot   [(3*i_memop)  +: 3]  = data_obi_req_fifo[rd_ptr_memop].prot;
+          rvfi_mem_exp.atop   [(6*i_memop)  +: 6]  = data_obi_req_fifo[rd_ptr_memop].atop;
+          rvfi_mem_exp.memtype[(2*i_memop)  +: 2]  = data_obi_req_fifo[rd_ptr_memop].memtype;
+          rvfi_mem_exp.dbg    [(1*i_memop)  +: 1]  = data_obi_req_fifo[rd_ptr_memop].dbg;
+          rvfi_mem_exp.exokay [(1*i_memop)  +: 1]  = data_obi_resp_fifo[rd_ptr_memop].exokay && !data_obi_req_fifo[rd_ptr_memop].memtype[0];
+
+          if(rvfi_mem_read[i_memop]) begin
+            rvfi_mem_exp.rmask[(4*i_memop) +: 4] = exp_rvfi_mem_mask;
+          end
+          else begin
+            rvfi_mem_exp.wmask[(4*i_memop) +: 4] = exp_rvfi_mem_mask;
+          end
+
+        end // if (rvfi_mem_xfer[i_memop])
+
+      end
+
+      // Assert that rvfi_mem is consistent with OBI transfers
+      a_rvfi_mem_consistency_read_addr:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                     rvfi_mem_read[i_memop] |-> rvfi_mem_exp.addr[(32*i_memop) +: 32] == rvfi_mem_dly.addr[(32*i_memop) +: 32])
+        else `uvm_error("rvfi", "rvfi_mem_addr not consistent with OBI transfers for reads")
+
+      a_rvfi_mem_consistency_read_rmask:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                     rvfi_mem_read[i_memop] |-> rvfi_mem_exp.rmask[(4*i_memop) +: 4] == rvfi_mem_dly.rmask[(4*i_memop) +: 4])
+        else `uvm_error("rvfi", "rvfi_mem_rmask not consistent with OBI transfers")
+
+      a_rvfi_mem_consistency_rdata:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       rvfi_mem_read[i_memop] && !rvfi_mem_dly.ld_str_blocked |->
+                       (rvfi_mem_exp.rdata[(32*i_memop) +: 32] & get_bitmask(rvfi_mem_exp.rmask[(4*i_memop) +: 4])) ==
+                       (rvfi_mem_dly.rdata[(32*i_memop) +: 32] & get_bitmask(rvfi_mem_dly.rmask[(4*i_memop) +: 4])))
+        else `uvm_error("rvfi", "rvfi_mem_rdata not consistent with OBI transfers")
+
+      a_rvfi_mem_consistency_read_prot:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       rvfi_mem_read[i_memop] |-> rvfi_mem_exp.prot[(3*i_memop) +: 3] == rvfi_mem_dly.prot[(3*i_memop) +: 3])
+        else `uvm_error("rvfi", "rvfi_mem_prot not consistent with OBI transfers for reads")
+
+      a_rvfi_mem_consistency_read_atop:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                        rvfi_mem_read[i_memop] |-> rvfi_mem_exp.atop[(6*i_memop) +: 6] == rvfi_mem_dly.atop[(6*i_memop) +: 6])
+        else `uvm_error("rvfi", "rvfi_mem_atop not consistent with OBI transfers for reads")
+
+      a_rvfi_mem_consistency_read_memtype:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                        rvfi_mem_read[i_memop] |-> rvfi_mem_exp.memtype[(2*i_memop) +: 2] == rvfi_mem_dly.memtype[(2*i_memop) +: 2])
+        else `uvm_error("rvfi", "rvfi_mem_memtype not consistent with OBI transfers for reads")
+
+      a_rvfi_mem_consistency_read_dbg:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                        rvfi_mem_read[i_memop] |-> rvfi_mem_exp.dbg[(1*i_memop) +: 1] == rvfi_mem_dly.dbg[(1*i_memop) +: 1])
+        else `uvm_error("rvfi", "rvfi_mem_dbg not consistent with OBI transfers for reads")
+
+      a_rvfi_mem_consistency_read_exokay:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                        rvfi_mem_read[i_memop] |-> rvfi_mem_exp.exokay[(1*i_memop) +: 1] == rvfi_mem_dly.exokay[(1*i_memop) +: 1])
+        else `uvm_error("rvfi", "rvfi_mem_exokay not consistent with OBI transfers for reads")
+
+      a_rvfi_mem_consistency_read_err:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                        rvfi_mem_read[i_memop] |-> rvfi_mem_exp.err[(1*i_memop) +: 1] == rvfi_mem_dly.err[(1*i_memop) +: 1])
+        else `uvm_error("rvfi", "rvfi_mem_err not consistent with OBI transfers for reads")
+
+
+      a_rvfi_mem_consistency_write_addr:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                     obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.addr[(32*i_memop) +: 32] == rvfi_mem_dly.addr[(32*i_memop) +: 32])
+        else `uvm_error("rvfi", "rvfi_mem_addr not consistent with OBI transfers for writes")
+
+      a_rvfi_mem_consistency_write_wmask:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                     obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.wmask[(4*i_memop) +: 4] == rvfi_mem_dly.wmask[(4*i_memop) +: 4])
+        else `uvm_error("rvfi", "rvfi_mem_wdata not consistent with OBI transfers")
+
+      a_rvfi_mem_consistency_wdata:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                     obi_gnt_delay_ok && rvfi_mem_write[i_memop] |->
+                       (rvfi_mem_exp.wdata[(32*i_memop) +: 32] & get_bitmask(rvfi_mem_exp.wmask[(4*i_memop) +: 4])) ==
+                       (rvfi_mem_dly.wdata[(32*i_memop) +: 32] & get_bitmask(rvfi_mem_dly.wmask[(4*i_memop) +: 4])))
+        else `uvm_error("rvfi", "rvfi_mem_wdata not consistent with OBI transfers")
+
+      a_rvfi_mem_consistency_write_prot:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.prot[(3*i_memop) +: 3] == rvfi_mem_dly.prot[(3*i_memop) +: 3])
+        else `uvm_error("rvfi", "rvfi_mem_prot not consistent with OBI transfers for writes")
+
+      a_rvfi_mem_consistency_write_atop:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.atop[(6*i_memop) +: 6] == rvfi_mem_dly.atop[(6*i_memop) +: 6])
+        else `uvm_error("rvfi", "rvfi_mem_atop not consistent with OBI transfers for writes")
+
+      a_rvfi_mem_consistency_write_memtype:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                        obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.memtype[(2*i_memop) +: 2] == rvfi_mem_dly.memtype[(2*i_memop) +: 2])
+        else `uvm_error("rvfi", "rvfi_mem_memtype not consistent with OBI transfers for writes")
+
+      a_rvfi_mem_consistency_write_dbg:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.dbg[(1*i_memop) +: 1] == rvfi_mem_dly.dbg[(1*i_memop) +: 1])
+        else `uvm_error("rvfi", "rvfi_mem_dbg not consistent with OBI transfers for writes")
+
+      a_rvfi_mem_consistency_write_exokay:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.exokay[(1*i_memop) +: 1] == rvfi_mem_dly.exokay[(1*i_memop) +: 1])
+        else `uvm_error("rvfi", "rvfi_mem_exokay not consistent with OBI transfers for writes")
+
+      a_rvfi_mem_consistency_write_err:
+      assert property (@(posedge clk_i) disable iff (!rst_ni)
+                       obi_gnt_delay_ok && rvfi_mem_write[i_memop] |-> rvfi_mem_exp.err[(1*i_memop) +: 1] == rvfi_mem_dly.err[(1*i_memop) +: 1])
+        else `uvm_error("rvfi", "rvfi_mem_err not consistent with OBI transfers for writes")
+
+    end
+
+  endgenerate
 
 endmodule
-
-

@@ -50,8 +50,9 @@ module cv32e40x_div import cv32e40x_pkg::*;
     output logic [5:0]         alu_shift_amt_o,
     input logic [31:0]         alu_op_b_shifted_i,
 
-    // Divider enable
-    input logic                div_en_i,
+    // Controller inputs
+    input logic                halt_i,
+    input logic                kill_i,
 
     // Input handshake
     input logic                valid_i,
@@ -110,7 +111,7 @@ module cv32e40x_div import cv32e40x_pkg::*;
 
   // In case of negative op_b, invert op_b_i to count leading ones
   // and shift one less to preserve sign bit
-  assign op_b_alt = (~op_b_i << 1);
+  assign op_b_alt = {~op_b_i, 1'b0};
 
   always_comb
   begin
@@ -141,12 +142,12 @@ module cv32e40x_div import cv32e40x_pkg::*;
     end
   endgenerate
 
-  assign alu_clz_en_o = div_en_i;
+  assign alu_clz_en_o = valid_i;
 
   // Deternmine initial shift of divisor
   assign op_b_is_neg = op_b_i[31] & div_signed;
-  assign alu_shift_amt_o = alu_clz_result_i ;
-  assign alu_shift_en_o  = div_en_i;
+  assign alu_shift_amt_o = alu_clz_result_i;
+  assign alu_shift_en_o  = valid_i;
 
   // Check for op_b_i == 0
   assign op_b_is_zero = !(|op_b_i);
@@ -165,10 +166,19 @@ module cv32e40x_div import cv32e40x_pkg::*;
   assign comp_out = ((remainder_q == divisor_q) || ((remainder_q > divisor_q) ^ comp_inv_q)) &&
                     ((|remainder_q) || op_b_is_zero);
 
-  // Main adder and adder input muxes
+  // Adder input muxes
   assign add_b_mux = init_en ? 0 : remainder_q;
   assign add_a_mux = init_en ? op_a_i : divisor_q;
-  assign add_out   = init_remainder_pos ? add_b_mux + add_a_mux : add_b_mux - $signed(add_a_mux);
+
+  // Main adder
+  always_comb begin
+    if (init_remainder_pos) begin
+      add_out = add_b_mux + add_a_mux;
+    end
+    else begin
+      add_out = add_b_mux - $signed(add_a_mux);
+    end
+  end
 
   // Result mux, negate if necessary
   assign res_mux  = div_rem_q ? remainder_q : quotient_q;
@@ -180,10 +190,19 @@ module cv32e40x_div import cv32e40x_pkg::*;
 
   assign cnt_d_dummy = 6'd32 - alu_shift_amt_o;
 
-  assign cnt_d = init_en        ? alu_shift_amt_o    :
-                 init_dummy_cnt ? cnt_d_dummy - 6'd1 : /*-1 because one cycle is used to update the counter*/
-                 !cnt_q_is_zero ? cnt_q       - 6'd1 :
-                 cnt_q;
+  always_comb begin
+    cnt_d = cnt_q;
+
+    if (init_en) begin
+      cnt_d = alu_shift_amt_o;
+    end
+    else if (init_dummy_cnt) begin
+      cnt_d = cnt_d_dummy - 6'd1; /*-1 because one cycle is used to update the counter*/
+    end
+    else if (!cnt_q_is_zero) begin
+      cnt_d = cnt_q - 6'd1;
+    end
+  end
 
   assign cnt_q_is_zero = !(|cnt_q);
 
@@ -206,8 +225,9 @@ module cv32e40x_div import cv32e40x_pkg::*;
     divisor_en     = 1'b0;
     quotient_en    = 1'b0;
 
-    // Case statement assumes valid_i = 1; the valid_i = 0 scenario
-    // is handled after the case statement.
+    // Case statement assumes valid_i = 1, halt_i = 0 and kill_i = 0.
+    // the valid_i = 0 / halt_i = 1 / kill_i = 1 scenarios
+    // are handled after the case statement.
     case (state)
       DIV_IDLE: begin
         remainder_en = 1'b1;
@@ -241,6 +261,7 @@ module cv32e40x_div import cv32e40x_pkg::*;
 
       DIV_FINISH: begin
         valid_o = 1'b1;
+
         if (ready_i) begin
           ready_o    = 1'b1;
           next_state = DIV_IDLE;
@@ -252,12 +273,27 @@ module cv32e40x_div import cv32e40x_pkg::*;
     endcase
 
     // Allow kill at any time
-    if (!valid_i) begin
-      next_state = DIV_IDLE;
+    if (!valid_i || kill_i) begin
       ready_o    = 1'b1;
       valid_o    = 1'b0;
+    end else begin
+      // Neither ready nor valid when halted
+      if (halt_i) begin
+        ready_o = 1'b0;
+        valid_o = 1'b0;
+      end
     end
 
+    if (kill_i) begin
+      next_state = DIV_IDLE;
+
+      init_en        = 1'b0;
+      init_dummy_cnt = 1'b0;
+
+      remainder_en   = 1'b0;
+      divisor_en     = 1'b0;
+      quotient_en    = 1'b0;
+    end
   end
 
   ///////////////////////////////////////////////////////////////////////////////
@@ -286,6 +322,13 @@ module cv32e40x_div import cv32e40x_pkg::*;
        comp_inv_q  <= 1'b0;
        res_inv_q   <= 1'b0;
     end else begin
+      // Update flops on valid input or when killed. No updates while halted.
+      // When a divide instruction is killed, the cnt_q will decrement unless
+      // the divider is finished in the same cycle as the kill.
+      // All flops below will keep their values until initialized for the next
+      // divide (init_en, remainder_en, divisor_en, quotient_en) and no flops
+      // are used between kill and init.
+      if ((valid_i && !halt_i) || kill_i) begin
        state       <= next_state;
        remainder_q <= remainder_d;
        divisor_q   <= divisor_d;
@@ -294,6 +337,7 @@ module cv32e40x_div import cv32e40x_pkg::*;
        div_rem_q   <= div_rem_d;
        comp_inv_q  <= comp_inv_d;
        res_inv_q   <= res_inv_d;
+      end
     end
   end
 

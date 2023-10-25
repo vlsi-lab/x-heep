@@ -36,6 +36,7 @@ module cv32e40x_controller import cv32e40x_pkg::*;
   parameter int unsigned REGFILE_NUM_READ_PORTS = 2,
   parameter bit          CLIC                   = 0,
   parameter int unsigned CLIC_ID_WIDTH          = 5,
+  parameter rv32_e       RV32                   = RV32I,
   parameter bit          DEBUG                  = 1
 )
 (
@@ -59,7 +60,6 @@ module cv32e40x_controller import cv32e40x_pkg::*;
   input  logic        sys_en_id_i,
   input  logic        sys_mret_id_i,
   input  logic        csr_en_raw_id_i,
-  input  csr_opcode_e csr_op_id_i,
   input  logic        first_op_id_i,
   input  logic        last_op_id_i,
   input  logic        abort_op_id_i,
@@ -68,7 +68,7 @@ module cv32e40x_controller import cv32e40x_pkg::*;
 
   input  ex_wb_pipe_t ex_wb_pipe_i,
   input  mpu_status_e mpu_status_wb_i,            // MPU status (WB stage)
-  input  logic        wpt_match_wb_i,             // LSU watchpoint trigger in WB
+  input  logic [31:0] wpt_match_wb_i,             // LSU watchpoint trigger in WB
   input  align_status_e align_status_wb_i,        // Aligned status (atomics and mret pointers) in WB
 
   // Last operation bits
@@ -79,7 +79,7 @@ module cv32e40x_controller import cv32e40x_pkg::*;
 
   // LSU
   input  logic        data_stall_wb_i,            // WB stalled by LSU
-  input  logic [1:0]  lsu_err_wb_i,               // LSU bus error in WB stage
+  input  lsu_err_wb_t lsu_err_wb_i,               // LSU bus error in WB stage
   input  logic        lsu_busy_i,                 // LSU is busy with outstanding transfers or is initiating a new transfer
   input  logic        lsu_bus_busy_i,             // LSU is busy with outstanding transfers
   input  logic        lsu_interruptible_i,        // LSU may be interrupted
@@ -118,6 +118,7 @@ module cv32e40x_controller import cv32e40x_pkg::*;
   input  logic        csr_mnxti_read_i,           // MNXTI is read in CSR (EX)
 
   input  logic        csr_irq_enable_write_i,     // An interrupt may be enabled by a write (WB)
+  input  csr_hz_t     csr_hz_i,
 
   input logic [REGFILE_NUM_READ_PORTS-1:0] rf_re_id_i,
   input rf_addr_t     rf_raddr_id_i[REGFILE_NUM_READ_PORTS],
@@ -130,7 +131,7 @@ module cv32e40x_controller import cv32e40x_pkg::*;
   input  logic        wb_valid_i,               // WB stage is done
 
   // Data OBI interface monitor
-  if_c_obi.monitor    m_c_obi_data_if,
+  cv32e40x_if_c_obi.monitor m_c_obi_data_if,
 
   // Outputs
   output ctrl_byp_t   ctrl_byp_o,
@@ -141,8 +142,8 @@ module cv32e40x_controller import cv32e40x_pkg::*;
   input logic         fencei_flush_ack_i,
 
   // eXtension interface
-  if_xif.cpu_commit   xif_commit_if,
-  input               xif_csr_error_i
+  cv32e40x_if_xif.cpu_commit xif_commit_if,
+  input                      xif_csr_error_i
 );
 
   // Main FSM and debug FSM
@@ -151,6 +152,7 @@ module cv32e40x_controller import cv32e40x_pkg::*;
     .X_EXT                       ( X_EXT                    ),
     .CLIC                        ( CLIC                     ),
     .CLIC_ID_WIDTH               ( CLIC_ID_WIDTH            ),
+    .RV32                        ( RV32                     ),
     .DEBUG                       ( DEBUG                    )
   )
   controller_fsm_i
@@ -262,7 +264,6 @@ module cv32e40x_controller import cv32e40x_pkg::*;
     .alu_jmpr_id_i              ( alu_jmpr_id_i            ),
     .sys_mret_id_i              ( sys_mret_id_i            ),
     .csr_en_raw_id_i            ( csr_en_raw_id_i          ),
-    .csr_op_id_i                ( csr_op_id_i              ),
 
     // From EX
     .csr_counter_read_i         ( csr_counter_read_i       ),
@@ -276,6 +277,8 @@ module cv32e40x_controller import cv32e40x_pkg::*;
     .lsu_atomic_ex_i            ( lsu_atomic_ex_i          ),
     .lsu_atomic_wb_i            ( lsu_atomic_wb_i          ),
     .lsu_bus_busy_i             ( lsu_bus_busy_i           ),
+
+    .csr_hz_i                   ( csr_hz_i                 ),
 
     // Outputs
     .ctrl_byp_o                 ( ctrl_byp_o               )

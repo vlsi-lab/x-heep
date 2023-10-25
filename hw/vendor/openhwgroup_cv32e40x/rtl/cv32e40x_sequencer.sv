@@ -97,27 +97,32 @@ module cv32e40x_sequencer import cv32e40x_pkg::*;
       instr_cnt_q <= '0;
       seq_state_q <= S_IDLE;
     end else begin
-      if (valid_o && ready_i) begin
+      if (valid_o && ready_i) begin // Implies !halt_i && !kill_i
         // Exclude tablejumps and tablejump pointers from increasing the counter.
         // To remain SEC clean, the prefetcher is ack'ed on a tablejump. If the tablejump
         // has a bus error or mpu error, the instruction after the tablejump may reach EX before the pipeline is killed.
         // If this next instruction is a load or store, the starting value for the stack adjustment will be wrong and the LSU
         // outputs may get affected. If one changes to not ack the prefetcher on table jumps, this exclusion can likely be removed.
-        if (!seq_last_o && !seq_tbljmp_o && !instr_is_tbljmp_ptr_i) begin
-          instr_cnt_q <= instr_cnt_q + 1'd1;
+        if (!seq_last_o) begin
+          if (!seq_tbljmp_o && !instr_is_tbljmp_ptr_i) begin
+            instr_cnt_q <= instr_cnt_q + 1'd1;
+          end
         end else begin
           instr_cnt_q <= '0;
         end
 
         seq_state_q <= seq_state_n;
-      end
+      end else begin
+        // Reset state and counter when killed
+        if (kill_i) begin
+          instr_cnt_q <= '0;
+          seq_state_q <= S_IDLE;
+        end
 
-      if ((!valid_o && !halt_i) || kill_i) begin
-        // Whenever we have no valid outputs and are not halted, reset counter to 0.
-        // In case both halt_i and kill_i are high, kill_i takes precedence.
-        // Not resetting if halted, as we might have to continue the sequence after being unhalted.
-        instr_cnt_q <= '0;
-        seq_state_q <= seq_state_n;
+        // When halt_i == 1, no state change should occur. Checked with a_seq_halt_stable within cv32e40x_sequencer_sva.sv
+        // When a sequence is done, instr_cnt_q should be zero and seq_state_q should be S_IDLE. Checked with a_done_state within cv32e40x_sequencer_sva.sv
+        // When (!valid_o && !halt_i) instr_cnt_q should be zero and seq_state_q should be S_IDLE (no instruction was emitted and state should be the initial state)
+        //   Checked by a_idle_state within cv32e40x_sequencer_sva.sv
       end
     end
   end // always_ff
@@ -218,7 +223,6 @@ module cv32e40x_sequencer import cv32e40x_pkg::*;
   // In principle this is the same as "seq_en && valid_i"
   //   as the output of the above decode logic is equivalent to seq_en
   // We have valid outputs for any correctly decoded instruction, or when we are handling a tablejump pointer.
-  // todo: halting IF stage would imply !valid, can this be an issue?
   assign valid_o = ((seq_instr != INVALID_INST) || instr_is_tbljmp_ptr_i) && valid_i && !halt_i && !kill_i;
 
 
@@ -307,7 +311,7 @@ module cv32e40x_sequencer import cv32e40x_pkg::*;
           end
         end else if (seq_move_a2s) begin
           // addi s*, a0, 0
-          instr_o.bus_resp.rdata = {12'h000, 5'd10, 3'b000, sn_to_regnum(5'(instr[9:7])), OPCODE_OPIMM};
+          instr_o.bus_resp.rdata = {12'h000, 5'd10, 3'b000, sn_to_regnum({2'h0,instr[9:7]}), OPCODE_OPIMM};
           seq_state_n = S_DMOVE;
         end else if (seq_tbljmp_o) begin
           if (instr[9:7] == 3'b000) begin
@@ -323,12 +327,11 @@ module cv32e40x_sequencer import cv32e40x_pkg::*;
         end else if (seq_move_s2a) begin
           // move s to a
           // addi a0, s*, 0
-          instr_o.bus_resp.rdata = {12'h000, sn_to_regnum(5'(instr[9:7])), 3'b000, 5'd10, OPCODE_OPIMM};
+          instr_o.bus_resp.rdata = {12'h000, sn_to_regnum({2'h0,instr[9:7]}), 3'b000, 5'd10, OPCODE_OPIMM};
           seq_state_n = S_DMOVE;
         end
 
       end
-      // todo: Any instruction output while not in S_IDLE should not combinatorially depend on instr_rdata_i
       S_PUSH: begin
         seq_first_fsm = 1'b0;
         // sw rs2, current_stack_adj(sp)
@@ -352,10 +355,10 @@ module cv32e40x_sequencer import cv32e40x_pkg::*;
         // Second half of double moves
         if (seq_move_a2s) begin
           // addi s*, a1, 0
-          instr_o.bus_resp.rdata = {12'h000, 5'd11, 3'b000, sn_to_regnum(5'(instr[4:2])), OPCODE_OPIMM};
+          instr_o.bus_resp.rdata = {12'h000, 5'd11, 3'b000, sn_to_regnum({2'h0,instr[4:2]}), OPCODE_OPIMM};
         end else begin
           // addi a1, s*, 0
-          instr_o.bus_resp.rdata = {12'h000, sn_to_regnum(5'(instr[4:2])), 3'b000, 5'd11, OPCODE_OPIMM};
+          instr_o.bus_resp.rdata = {12'h000, sn_to_regnum({2'h0,instr[4:2]}), 3'b000, 5'd11, OPCODE_OPIMM};
         end
 
         seq_state_n = S_IDLE;
@@ -423,11 +426,10 @@ module cv32e40x_sequencer import cv32e40x_pkg::*;
       end
     endcase
 
-    // If there is no valid output or we are killed: default to ready_fsm and set state to IDLE.
-    // No reset if !valid while halted, as we may need to continue the sequence after being unhalted.
+    // If there is no valid output or we are killed: default to ready_fsm==1 (fans into if_ready).
+    // No ready_fsm if !valid while halted, as we cannot accept a new instruction while halted.
     if ((!valid_o && !halt_i) || kill_i) begin
       ready_fsm = 1'b1;
-      seq_state_n = S_IDLE;
     end
   end
 

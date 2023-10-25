@@ -29,7 +29,8 @@ module cv32e40x_core_sva
     parameter a_ext_e A_EXT = A_NONE,
     parameter bit     DEBUG = 1,
     parameter int     PMA_NUM_REGIONS = 0,
-    parameter bit     CLIC = 0
+    parameter bit     CLIC = 0,
+    parameter int     DBG_NUM_TRIGGERS = 1
   )
   (
   input logic        clk,
@@ -43,14 +44,18 @@ module cv32e40x_core_sva
   input logic        mie_we,
   input logic [31:0] mip,
   input dcsr_t       dcsr,
+  input logic        if_valid,
+  input logic        id_ready,
+  input logic        first_op_if,
+  input logic        prefetch_is_mret_ptr_i,
   input              if_id_pipe_t if_id_pipe,
   input id_ex_pipe_t id_ex_pipe,
-  input              id_stage_multi_cycle_id_stall,
   input logic        id_stage_id_valid,
   input logic        ex_ready,
   input logic        irq_ack, // irq ack output
   input logic        irq_clic_shv, // ack'ed irq is a CLIC SHV
   input logic        irq_req_ctrl, // Interrupt controller request an interrupt
+  input logic        irq_wu_ctrl,
   input ex_wb_pipe_t ex_wb_pipe,
   input logic        wb_valid,
   input logic        branch_taken_in_ex,
@@ -65,12 +70,13 @@ module cv32e40x_core_sva
   input logic [31:0]   operand_b_id_i,
   input logic [31:0]   jalr_fw_id_i,
   input logic          last_op_id,
+  input logic          first_op_id,
   input logic [31:0]   rf_wdata_wb,
   input logic          rf_we_wb,
   input lsu_atomic_e   lsu_atomic_wb,
   input logic          lsu_valid_wb,
   input logic          lsu_exception_wb,
-  input logic          lsu_wpt_match_wb,
+  input logic [31:0]   lsu_wpt_match_wb,
   input logic [31:0]   lsu_rdata_wb,
   input logic          lsu_exokay_wb,
 
@@ -110,7 +116,25 @@ module cv32e40x_core_sva
   input logic [31:0] cs_registers_mepc_n,
   input mcause_t     cs_registers_csr_cause_i, // From controller
   input mcause_t     cs_registers_mcause_q,    // From cs_registers, flopped mcause
-  input mstatus_t    cs_registers_mstatus_q);
+  input mstatus_t    cs_registers_mstatus_q,
+
+  input logic        xif_compressed_valid,
+  input logic        xif_issue_valid,
+  input logic        xif_commit_valid,
+  input logic        xif_mem_ready,
+  input logic        xif_mem_result_valid,
+  input logic        xif_result_ready,
+
+  input logic        core_sleep_o,
+  input logic        fencei_flush_req_o,
+  input logic        debug_havereset_o,
+  input logic        debug_running_o,
+  input logic [1:0]  lsu_cnt_q,
+  input logic [1:0]  resp_filter_bus_cnt_q,
+  input logic [1:0]  resp_filter_core_cnt_q,
+  input write_buffer_state_e write_buffer_state,
+  input privlvl_t    priv_lvl
+);
 
 if (CLIC) begin
   property p_clic_mie_tieoff;
@@ -125,7 +149,6 @@ if (CLIC) begin
   endproperty
   a_clic_mip_tieoff : assert property(p_clic_mip_tieoff) else `uvm_error("core", "MIP not tied to 0 in CLIC mode")
 
-  //todo: add CLIC related assertions (level thresholds etc)
 end else begin
   // CLIC == 0
   // Check that a taken IRQ is actually enabled (e.g. that we do not react to an IRQ that was just disabled in MIE)
@@ -214,7 +237,7 @@ always_ff @(posedge clk , negedge rst_ni)
         expected_ebrk_mepc <= ex_wb_pipe.pc;
       end
 
-      if (!first_instr_err_found && (ex_wb_pipe.instr.mpu_status == MPU_OK) && (ex_wb_pipe.instr.align_status == ALIGN_OK) && !irq_ack && !pending_debug &&
+      if (!first_instr_err_found && (ex_wb_pipe.instr.mpu_status == MPU_OK) &&!irq_ack && !pending_debug &&
          !(ctrl_fsm.pc_mux == PC_TRAP_NMI) &&
           ex_wb_pipe.instr_valid && ex_wb_pipe.instr.bus_resp.err && !ctrl_debug_mode_n ) begin
         first_instr_err_found   <= 1'b1;
@@ -328,10 +351,38 @@ always_ff @(posedge clk , negedge rst_ni)
     end
   endgenerate
 
-  // For checking single step, ID stage is used as it contains a 'multi_cycle_id_stall' signal.
-  // This makes it easy to count misaligned LSU ins as one instruction instead of two.
-  logic inst_taken;
-  assign inst_taken = id_stage_id_valid && ex_ready && last_op_id && !id_stage_multi_cycle_id_stall; // todo: the && !id_stage_multi_cycle_id_stall signal should now no longer be needed
+  // Count number of instruction going from IF to ID while not in debug mode
+  // Counting on first_op to avoid the case where a operation with last_op=0 will receive
+  // an abort_op later in the pipeline, effectively making it a last_op.
+  logic [31:0] inst_taken_if;
+  always_ff @(posedge clk , negedge rst_ni) begin
+    if (rst_ni == 1'b0) begin
+      inst_taken_if <= 32'd0;
+    end else begin
+      if (ctrl_fsm.debug_mode) begin
+        inst_taken_if <= 32'd0;
+      end else if (if_valid && id_ready && first_op_if) begin
+        inst_taken_if <= inst_taken_if + 32'd1;
+      end
+    end
+  end
+
+  // Count number of instruction going from ID to EX while not in debug mode
+  // Counting on first_op to avoid the case where a operation with last_op=0 will receive
+  // an abort_op later in the pipeline, effectively making it a last_op.
+  logic [31:0] inst_taken_id;
+  always_ff @(posedge clk , negedge rst_ni) begin
+    if (rst_ni == 1'b0) begin
+      inst_taken_id <= 32'd0;
+    end else begin
+      if (ctrl_fsm.debug_mode) begin
+        inst_taken_id <= 32'd0;
+      end else if (id_stage_id_valid && ex_ready && first_op_id) begin
+        inst_taken_id <= inst_taken_id + 32'd1;
+      end
+    end
+  end
+
 
   // Support for single step assertion
   // In case of single step + taken interrupt, the first instruction
@@ -375,10 +426,6 @@ if (CLIC) begin
   // External debug entry and interrupts (including NMIs) are not allowed to be taken while there is
   // a live pointer in WB (IF-ID: guarded by POINTER_FETCH STATE, EX-WB: guarded by clic_ptr_in_pipeline).
   //   - this could cause the address of the pointer to end up in DPC, making dret jumping to a mtvt entry instead of an instruction.
-  /*
-      todo: Reintroduce (and update) when debug single step logic has been updated and POINTER_FETCH state removed.
-             -should likely flop the event that causes single step entry to evaluate all debug reasons
-              when the pipeline is guaranteed to not disallow any debug reason to enter debug.
   a_single_step_with_irq_shv :
     assert property (@(posedge clk) disable iff (!rst_ni)
                       (dcsr.step && !ctrl_fsm.debug_mode && irq_ack && irq_clic_shv)
@@ -388,7 +435,6 @@ if (CLIC) begin
                       or
                          (!wb_valid until (ctrl_debug_mode_n && (ctrl_debug_cause_n == DBG_CAUSE_HALTREQ)))) // external debug happened before pointer reached WB
       else `uvm_error("core", "Assertion a_single_step_with_irq_shv failed")
-*/
 
 end else begin
   // Interrupt taken during single stepping.
@@ -488,7 +534,7 @@ end
       // All instructions from the A-extension write the register file
       a_all_atop_write_rf:
         assert property (@(posedge clk) disable iff (!rst_ni)
-                        (lsu_atomic_wb != AT_NONE) && lsu_valid_wb && !lsu_exception_wb && !lsu_wpt_match_wb
+                        (lsu_atomic_wb != AT_NONE) && lsu_valid_wb && !lsu_exception_wb && !(|lsu_wpt_match_wb)
                         |->
                         rf_we_wb)
           else `uvm_error("core", "Atomic instruction did not write the register file")
@@ -496,7 +542,7 @@ end
       // SC.W which receives !exokay must write 1 to the register file
       a_atop_sc_fault_rf_wdata:
         assert property (@(posedge clk) disable iff (!rst_ni)
-                        (lsu_atomic_wb == AT_SC) && lsu_valid_wb && !lsu_exception_wb && !lsu_wpt_match_wb &&
+                        (lsu_atomic_wb == AT_SC) && lsu_valid_wb && !lsu_exception_wb && !(|lsu_wpt_match_wb) &&
                         !lsu_exokay_wb
                         |->
                         (lsu_rdata_wb == 32'h1))
@@ -505,7 +551,7 @@ end
       // SC.W which receives exokay must write 0 to the register file
       a_atop_sc_success_rf_wdata:
         assert property (@(posedge clk) disable iff (!rst_ni)
-                        (lsu_atomic_wb == AT_SC) && lsu_valid_wb && !lsu_exception_wb && !lsu_wpt_match_wb &&
+                        (lsu_atomic_wb == AT_SC) && lsu_valid_wb && !lsu_exception_wb && !(|lsu_wpt_match_wb) &&
                         lsu_exokay_wb
                         |->
                         (lsu_rdata_wb == 32'h0))
@@ -526,7 +572,7 @@ end
         assert property (@(posedge clk) disable iff (!rst_ni)
                         (ex_wb_pipe.lsu_en && ex_wb_pipe.instr_valid) &&   // Valid LSU instruction in WB
                         (lsu_atomic_wb != AT_NONE) &&                      // LSU instruction is atomic
-                        !(lsu_exception_wb || lsu_wpt_match_wb)            // No exception or watchpoint (it reached the bus)
+                        !(lsu_exception_wb || |lsu_wpt_match_wb)           // No exception or watchpoint (it reached the bus)
                         |->
                         !data_req_o &&
                         (cnt_q == 2'b01))
@@ -640,6 +686,21 @@ if (!CLIC) begin
 
   a_mip_mie_write_disable: assert property(p_mip_mie_write_disable)
     else `uvm_error("core", "Interrupt taken after disabling");
+
+  // If an interrupt wakeup is signalled while the core is in the SLEEP state, an interrupt
+  // request must be asserted in the next cycle if interrupts are globally enabled.
+  property p_req_after_wake;
+    @(posedge clk) disable iff (!rst_ni)
+    (  (ctrl_fsm_cs == SLEEP) &&  // Core is in sleep state
+        irq_wu_ctrl               // Wakeup requested
+        |=>
+        (irq_req_ctrl)  // interrupt must be requested
+        or
+        (!irq_req_ctrl && !(cs_registers_mstatus_q.mie || (priv_lvl < PRIV_LVL_M)))); // unless interrupts are disabled
+  endproperty;
+
+  a_req_after_wake: assert property(p_req_after_wake)
+    else `uvm_error("core", "No interrupt request after wakeup signal");
 end
 
 // Clearing external interrupts via a store instruction causes irq_i to go low the next cycle.
@@ -655,6 +716,27 @@ endproperty;
 a_no_irq_after_lsu: assert property(p_no_irq_after_lsu)
   else `uvm_error("core", "Interrupt taken after disabling");
 
+a_sleep_inactive_signals:
+assert property (@(posedge clk_i) disable iff (!rst_ni)
+                 (core_sleep_o == 1'b1)
+                 |->
+                 !(instr_req_o ||
+                   data_req_o  ||
+                   fencei_flush_req_o ||
+                   xif_compressed_valid ||
+                   xif_issue_valid ||
+                   xif_commit_valid ||
+                   xif_mem_ready ||
+                   xif_mem_result_valid ||
+                   xif_result_ready ||
+                   debug_havereset_o ||
+                   debug_halted_o) &&
+                 debug_running_o &&
+                 (lsu_cnt_q == 2'b00) &&
+                 (resp_filter_bus_cnt_q == 2'b00) &&
+                 (resp_filter_core_cnt_q == 2'b00) &&
+                 (write_buffer_state == WBUF_EMPTY))
+  else `uvm_error("core", "Signals active while core_sleep_o=1")
 
 
 generate
@@ -714,16 +796,50 @@ generate
                       |-> (ctrl_fsm.debug_mode && dcsr.step))
       else `uvm_error("core", "Multiple instructions retired during single stepping")
 
-    // Single step without interrupts
-    // Should issue exactly one instruction from ID before entering debug_mode
-    a_single_step_no_irq :
-    assert property (@(posedge clk) disable iff (!rst_ni || interrupt_taken)
-                    (inst_taken && dcsr.step && !ctrl_fsm.debug_mode)
-                    ##1 inst_taken [->1]
-                    |-> (ctrl_fsm.debug_mode && dcsr.step))
-      else `uvm_error("core", "Assertion a_single_step_no_irq failed")
+    // Single step should issue exactly one instruction from IF (and ID) before entering debug_mode.
+    // Exception are for cases where the pipeline is killed before any instruction exits ID or there has been
+    // two inst_taken_id/if due to CLIC SHV or mret pointers.
+    // 1: CLIC SHV is taken after an instruction exits ID. This causes the CLIC pointer to pass through
+    //    the pipeline before the core can enter debug.
+    // 2: An mret instruction causes a CLIC pointer fecth (mcause.minhv==1). The pointer must reach WB
+    //    before the core can enter debug.
+    a_single_step_no_irq_id :
+    assert property (@(posedge clk) disable iff (!rst_ni)
+                      (ctrl_fsm_cs == DEBUG_TAKEN) &&
+                      dcsr.step &&
+                      !ctrl_fsm.debug_mode
+                      |->
+                      (inst_taken_id == 32'd1)                                                || // Exactly one instruction went from ID to EX
+                      (inst_taken_id == 32'd0) && (ctrl_fsm.debug_cause == DBG_CAUSE_HALTREQ) || // External debug before any instruction
+                      (inst_taken_id == 32'd0) && $past(ctrl_fsm.irq_ack)                     || // Interrupt taken before any instruction
+                      (inst_taken_id == 32'd0) && $past(ctrl_pending_nmi)                     || // NMI taken before any instruction
+                      (inst_taken_id == 32'd2) && $past(ex_wb_pipe.instr_meta.clic_ptr || ex_wb_pipe.instr_meta.mret_ptr)) // A CLIC interrupt or mret caused a second fetch for the pointer
+      else `uvm_error("core", "More than one instruction issued from ID to EX during single step")
 
-    // todo: add similar assertion as above to check that only one instruction moves from IF to ID while taking a single step (rename inst_taken to inst_taken_id and introduce similar inst_taken_if signal)
+    a_single_step_no_irq_if :
+    assert property (@(posedge clk) disable iff (!rst_ni)
+                    (ctrl_fsm_cs == DEBUG_TAKEN) &&
+                    dcsr.step &&
+                    !ctrl_fsm.debug_mode
+                    |->
+                    (inst_taken_if == 32'd1)                                                || // Exactly one instruction went from IF to ID
+                    (inst_taken_if == 32'd0) && (ctrl_fsm.debug_cause == DBG_CAUSE_HALTREQ) || // External debug before any instruction
+                    (inst_taken_if == 32'd0) && $past(ctrl_fsm.irq_ack)                     || // Interrupt taken before any instruction
+                    (inst_taken_if == 32'd0) && $past(ctrl_pending_nmi)                     || // NMI taken before any instruction
+                    (inst_taken_if == 32'd2) && $past(ex_wb_pipe.instr_meta.clic_ptr || ex_wb_pipe.instr_meta.mret_ptr)) // A CLIC interrupt or mret caused a second fetch for the pointer
+
+      else `uvm_error("core", "More than one instruction issued from IF to ID during single step")
+
+    // Check that unused trigger bits remain zero
+    a_unused_trigger_bits:
+    assert property (@(posedge clk) disable iff (!rst_ni)
+                    1'b1
+                    |->
+                    (|if_id_pipe.trigger_match[31:DBG_NUM_TRIGGERS] == 1'b0) &&
+                    (|id_ex_pipe.trigger_match[31:DBG_NUM_TRIGGERS] == 1'b0) &&
+                    (|ex_wb_pipe.trigger_match[31:DBG_NUM_TRIGGERS] == 1'b0) &&
+                    (|lsu_wpt_match_wb[31:DBG_NUM_TRIGGERS] == 1'b0))
+      else `uvm_error("core", "Unused trigger bits are not zero")
 
   end
 endgenerate

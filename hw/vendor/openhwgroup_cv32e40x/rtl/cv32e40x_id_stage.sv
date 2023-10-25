@@ -75,7 +75,6 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   output logic        sys_mret_insn_o,
 
   output logic        csr_en_raw_o,
-  output csr_opcode_e csr_op_o,
 
   output logic        alu_en_o,
   output logic        sys_en_o,
@@ -97,8 +96,9 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   input  logic        ex_ready_i,     // EX stage is ready for new data
 
   // eXtension interface
-  if_xif.cpu_issue    xif_issue_if,
-  output logic        xif_offloading_o
+  cv32e40x_if_xif.cpu_issue xif_issue_if,
+  output logic              xif_offloading_o,
+  output logic              xif_dualread_o
 );
 
   // Source/Destination register instruction index
@@ -115,7 +115,6 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   localparam REG_D_LSB  = 7;
 
   logic [31:0] instr;
-  logic [15:0] c_instr;                         // Compressed instruction
 
   // Register Read/Write Control
   logic [1:0]           rf_re;                  // Decoder only supports rs1, rs2
@@ -186,14 +185,9 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   logic [31:0]          imm_u_type;
   logic [31:0]          imm_uj_type;
   logic [31:0]          imm_z_type;
-  logic [31:0]          imm_ciw_type;
-  logic [31:0]          imm_cl_type;
 
   // Branch target address
   logic [31:0]          bch_target;
-
-  // Stall for multicycle ID instructions
-  logic                 multi_cycle_id_stall;
 
   logic                 illegal_insn;
 
@@ -208,6 +202,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   logic                 xif_we;
   logic                 xif_exception;
   logic                 xif_dualwrite;
+  logic                 xif_dualread;
   logic                 xif_loadstore;
 
   // Signal for detection of first operation (of two) of table jumps.
@@ -221,7 +216,6 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   assign sys_mret_insn_o = sys_mret_insn;
 
   assign instr = if_id_pipe_i.instr.bus_resp.rdata;
-  assign c_instr = if_id_pipe_i.compressed_instr;
 
   // Immediate extraction and sign extension
   assign imm_i_type   = { {20 {instr[31]}}, instr[31:20] };
@@ -229,27 +223,6 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   assign imm_sb_type  = { {19 {instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0 };
   assign imm_u_type   = { instr[31:12], 12'b0 };
   assign imm_uj_type  = { {12 {instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0 };
-
-  // Immediate extraction and sign extension (compressed instructions)
-  assign imm_ciw_type = { 22'b0, c_instr[10:7], c_instr[12:11], c_instr[5], c_instr[6], 2'b0 };
-  assign imm_cl_type  = { 25'b0, c_instr[5], c_instr[12:10], c_instr[6], 2'b0 };
-
-/*
-  assign imm_cfldsp_type = {22'b0, c_instr[4:2], c_instr[12], c_instr[6:5], 3'b0};
-  assign imm_caddi_type  = {{22{c_instr[12]}}, c_instr[12:12], c_instr[4:3], c_instr[5:5], c_instr[2:2], c_instr[6:6], 4'b0};
-  assign imm_clwsp_type  = {24'b0, c_instr[3:2], c_instr[12:12], c_instr[6:4], 2'b0};
-  assign imm_cld_type    = {24'b0, c_instr[6:5], c_instr[12:10], 3'b0};
-  assign imm_cswsp_type  = {24'b0, c_instr[8:7], c_instr[12:9], 2'b0};
-  assign imm_fsdp_type   = {24'b0, c_instr[9:7], c_instr[12:10], 2'b0};
-  assign imm_csrli_type  = {26'b0, c_instr[12:12], c_instr[6:2]};
-  assign imm_candi_type  = {{26{c_instr[12]}}, c_instr[12:12], c_instr[6:2]};
-  assign imm_cbeq_type   = {{23{c_instr[12]}}, c_instr[12:12], c_instr[6:5], c_instr[2:2], c_instr[11:10], c_instr[4:3], 1'b0};
-  assign imm_clui_type   = {{14{c_instr[12]}}, c_instr[12:12], c_instr[6:2], 12'b0};
-  assign imm_clsb_type   = {28'd0, c_instr[10], c_instr[6:5], c_instr[11]};
-  assign imm_clsh_type   = {27'd0, c_instr[11:10], c_instr[6:5], 1'b0};
-*/
-
-
 
   // Immediate for CSR manipulation (zero extended)
   assign imm_z_type  = { 27'b0, instr[REG_S1_MSB:REG_S1_LSB] };
@@ -339,7 +312,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
 
   always_comb begin: jalr_fw_mux
     case (ctrl_byp_i.jalr_fw_mux_sel)
-      SELJ_FW_WB:   jalr_fw = ex_wb_pipe_i.rf_wdata;  // todo: This won't allow forwarding from the XIF.
+      SELJ_FW_WB:   jalr_fw = ex_wb_pipe_i.rf_wdata;  // todo:XIF This won't allow forwarding from the XIF.
       SELJ_REGFILE: jalr_fw = rf_rdata_i[0];
       default:      jalr_fw = rf_rdata_i[0];
     endcase
@@ -361,8 +334,6 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       IMMB_S:      imm_b = imm_s_type;
       IMMB_U:      imm_b = imm_u_type;
       IMMB_PCINCR: imm_b = if_id_pipe_i.instr_meta.compressed ? 32'h2 : 32'h4;
-      IMMB_CIW:    imm_b = imm_ciw_type;
-      IMMB_CL:     imm_b = imm_cl_type;
       default:     imm_b = imm_i_type;
     endcase
   end
@@ -493,13 +464,19 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
     .tbljmp_first_i                  ( tbljmp_first              )
   );
 
-  // Speculatively read all source registers for illegal instr, might be required by coprocessor
-  // Non-offloaded instructions will use maximum two read ports (rf_re from decoder is two bits, rf_re_o may be two or three bits wide)
-  // Todo: Too conservative, causes load_use stalls on offloaded instruction when the operands may not be needed at all.
-  //       issue_valid depends on halt_id (and data_rvalid) via the local instr_valid.
-  //       Can issue_valid be made fast by using the registered instr_valid and only factor in kill_id and not halt_id?
-  //       Maybe it is ok to have a late issue_valid, as accept signal will depend on late rs_valid anyway?
-  assign rf_re_o        = illegal_insn ? '1 : REGFILE_NUM_READ_PORTS'(rf_re);
+  generate
+    if (X_EXT) begin : x_ext_rf_re
+      // Speculatively read all source registers for illegal instr, might be required by coprocessor
+      // Non-offloaded instructions will use maximum two read ports (rf_re from decoder is two bits, rf_re_o may be two or three bits wide)
+      // Todo:XIF Too conservative, causes load_use stalls on offloaded instruction when the operands may not be needed at all.
+      //       issue_valid depends on halt_id (and data_rvalid) via the local instr_valid.
+      //       Can issue_valid be made fast by using the registered instr_valid and only factor in kill_id and not halt_id?
+      //       Maybe it is ok to have a late issue_valid, as accept signal will depend on late rs_valid anyway?
+      assign rf_re_o = illegal_insn ? '1 : REGFILE_NUM_READ_PORTS'(rf_re);
+    end else begin : no_x_ext_rf_re
+      assign rf_re_o = rf_re;
+    end
+  endgenerate
 
   // Register writeback is enabled either by the decoder or by the XIF
   assign rf_we          = rf_we_dec || xif_we;
@@ -523,7 +500,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       id_ex_pipe_o.alu_bch                <= 1'b0;
       id_ex_pipe_o.alu_jmp                <= 1'b0;
       id_ex_pipe_o.alu_operator           <= ALU_SLTU;
-      id_ex_pipe_o.alu_operand_a          <= 32'b0; // todo: path from data_rdata_i through WB to id_ex_pipe_o_reg_alu_operand_a seems longer than needed (too many gates in ID)
+      id_ex_pipe_o.alu_operand_a          <= 32'b0;
       id_ex_pipe_o.alu_operand_b          <= 32'b0;
 
       id_ex_pipe_o.operand_c              <= 32'b0;
@@ -570,7 +547,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       id_ex_pipe_o.pc                     <= 32'b0;
       id_ex_pipe_o.instr                  <= INST_RESP_RESET_VAL;
       id_ex_pipe_o.instr_meta             <= '0;
-      id_ex_pipe_o.trigger_match          <= 1'b0;
+      id_ex_pipe_o.trigger_match          <= '0;
 
       id_ex_pipe_o.first_op               <= 1'b0;
       id_ex_pipe_o.last_op                <= 1'b0;
@@ -664,7 +641,6 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
           id_ex_pipe_o.instr.bus_resp.rdata <= {16'h0, if_id_pipe_i.compressed_instr};
           id_ex_pipe_o.instr.bus_resp.err   <= if_id_pipe_i.instr.bus_resp.err;
           id_ex_pipe_o.instr.mpu_status     <= if_id_pipe_i.instr.mpu_status;
-          id_ex_pipe_o.instr.align_status   <= if_id_pipe_i.instr.align_status;
         end else begin
           id_ex_pipe_o.instr                <= if_id_pipe_i.instr;
         end
@@ -677,6 +653,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
         id_ex_pipe_o.xif_meta.exception     <= xif_exception;
         id_ex_pipe_o.xif_meta.loadstore     <= xif_loadstore;
         id_ex_pipe_o.xif_meta.dualwrite     <= xif_dualwrite;
+        id_ex_pipe_o.xif_meta.dualread      <= xif_dualread;
         id_ex_pipe_o.xif_meta.accepted      <= xif_insn_accept;
 
       end else if (ex_ready_i) begin
@@ -689,33 +666,24 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   assign alu_jmpr_o   = alu_jmpr;
 
   assign csr_en_raw_o = csr_en_raw;
-  assign csr_op_o = csr_op;
 
   assign alu_en_o     = alu_en;
   assign sys_en_o     = sys_en;
 
-  // stall control for multicyle ID instructions (currently only misaligned LSU)
-  assign multi_cycle_id_stall = 1'b0; //todo:ok Zce push/pop will use this
-
   // Stage ready/valid
   //
   // Most stall conditions are factored into halt_id (and will force both ready and valid to 0).
-  //
-  // Multi-cycle instruction related stalls are different; in that case ready will be 0 (as ID already
-  // contains the instruction following the multicycle instruction.
-  // todo: update when Zce is included. Currently, no multi cycle ID stalls are possible.
 
-  assign id_ready_o = ctrl_fsm_i.kill_id || (!multi_cycle_id_stall && ex_ready_i && !ctrl_fsm_i.halt_id && !xif_waiting);
+  assign id_ready_o = ctrl_fsm_i.kill_id || (ex_ready_i && !ctrl_fsm_i.halt_id && !xif_waiting);
 
-  // multi_cycle_id_stall is currently tied to 1'b0. Will be used for Zce push/pop instructions.
-  assign id_valid_o = (instr_valid && !xif_waiting) || (multi_cycle_id_stall && !ctrl_fsm_i.kill_id && !ctrl_fsm_i.halt_id);
+  assign id_valid_o = (instr_valid && !xif_waiting);
 
   assign first_op_o  = if_id_pipe_i.first_op;
-  // An mret with mcause.minhv set and mcause.mpp = PRIV_LVL_M will cause a pointer fetch, and that pointer fetch is the last operation of the mret.
+  // An mret with mcause.minhv set  will cause a pointer fetch, and that pointer fetch is the last operation of the mret.
   // Mrets with the mcause conditions not true will be normal single operation instructions.
-  // Using CSR signals below is safe, as any implicit or explicit CSR read in ID stage is halted if there is an implicit or explicit CSR write
+  // Using CSR signals below is safe, as any implicit CSR read in ID stage is halted if there is an implicit or explicit CSR write
   // in either EX or WB at the same time.
-  assign last_op_o   = (sys_en && sys_mret_insn && mcause_i.minhv && (mcause_i.mpp == PRIV_LVL_M)) ? 1'b0 : if_id_pipe_i.last_op;
+  assign last_op_o   = (sys_en && sys_mret_insn && mcause_i.minhv) ? 1'b0 : if_id_pipe_i.last_op;
   assign abort_op_o  = if_id_pipe_i.abort_op || ctrl_byp_i.id_stage_abort;
   //---------------------------------------------------------------------------
   // eXtension interface
@@ -725,7 +693,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
     if (X_EXT) begin : x_ext
 
       // remember whether an instruction was accepted or rejected (required if EX stage is not ready)
-      // TODO: check whether this state machine should be put back in its initial state when the instruction in ID gets killed
+      // TODO:XIF check whether this state machine should be put back in its initial state when the instruction in ID gets killed
       logic xif_accepted_q, xif_rejected_q;
 
       assign xif_en = xif_insn_accept || xif_insn_reject;
@@ -749,14 +717,13 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       // Also attempt to offload any CSR instruction. The validity of such instructions are only
       // checked in the EX stage.
       // Instructions with deassert_we set to 1 from the controller bypass logic will not be attempted offloaded.
-      // Only offload instructions if the EX stage is ready not to miss data from xif_issue.issue_resp
-      assign xif_issue_if.issue_valid     = instr_valid && ex_ready_i &&
-                                            (illegal_insn || csr_en) &&
+      assign xif_issue_if.issue_valid     = instr_valid && (illegal_insn || csr_en) &&
                                             !(xif_accepted_q || xif_rejected_q || ctrl_byp_i.deassert_we);
 
       // Keep xif_offloading_o high after an offloaded instruction was accepted or rejected to get
       // a new instruction ID from the IF stage
       assign xif_offloading_o             = xif_issue_if.issue_valid || xif_accepted_q || xif_rejected_q;
+      assign xif_dualread_o = xif_dualread;
 
       assign xif_issue_if.issue_req.instr = instr;
       assign xif_issue_if.issue_req.mode  = PRIV_LVL_M;
@@ -773,17 +740,17 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
           xif_issue_if.issue_req.rs      [1] = operand_b_fw;
           xif_issue_if.issue_req.rs_valid[1] = !rf_illegal_raddr[1];
         end
-        // TODO: implement forwarding for other operands than rs1 and rs2
+        // TODO:XIF implement forwarding for other operands than rs1 and rs2
         for (integer i = 2; i < xif_issue_if.X_NUM_RS && i < REGFILE_NUM_READ_PORTS; i++) begin
           xif_issue_if.issue_req.rs      [i] = rf_rdata_i[i];
           xif_issue_if.issue_req.rs_valid[i] = !rf_illegal_raddr[i];
         end
       end
 
-      assign xif_issue_if.issue_req.ecs       = 6'b111111; // todo: hookup to related mstatus bits (for now just reporting all state as dirty)
+      assign xif_issue_if.issue_req.ecs       = 6'b111111; // todo:XIF hookup to related mstatus bits (for now just reporting all state as dirty)
                                                            // and make sure that instruction after ecs update sees correct bits
-      assign xif_issue_if.issue_req.ecs_valid = 1'b1; // todo: needs to take into account if mstatus extension context writes are in flight
-                                                      // todo: use xif_issue_if.issue_resp.ecswrite
+      assign xif_issue_if.issue_req.ecs_valid = 1'b1; // todo:XIF needs to take into account if mstatus extension context writes are in flight
+                                                      // todo:XIF use xif_issue_if.issue_resp.ecswrite
 
       // need to wait if the coprocessor is not ready and has not already accepted or rejected the instruction
       assign xif_waiting = xif_issue_if.issue_valid && !xif_issue_if.issue_ready && !xif_accepted_q && !xif_rejected_q;
@@ -792,10 +759,11 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       assign xif_insn_accept = (xif_issue_if.issue_valid && xif_issue_if.issue_ready &&  xif_issue_if.issue_resp.accept) || xif_accepted_q;
       assign xif_insn_reject = (xif_issue_if.issue_valid && xif_issue_if.issue_ready && !xif_issue_if.issue_resp.accept) || xif_rejected_q;
 
-      // TODO: These may be missed if issue_valid retracts before ID goes to EX. Need to check for sticky accept as well
+      // TODO:XIF These may be missed if issue_valid retracts before ID goes to EX. Need to check for sticky accept as well
       assign xif_we        = xif_issue_if.issue_valid && xif_issue_if.issue_resp.writeback;
       assign xif_exception = xif_issue_if.issue_valid && xif_issue_if.issue_resp.exc;
       assign xif_dualwrite = xif_issue_if.issue_valid && xif_issue_if.issue_resp.dualwrite;
+      assign xif_dualread  = xif_issue_if.issue_valid && xif_issue_if.issue_resp.dualread;
       assign xif_loadstore = xif_issue_if.issue_valid && xif_issue_if.issue_resp.loadstore;
 
     end else begin : no_x_ext
@@ -808,6 +776,8 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       assign xif_we                           = 1'b0;
       assign xif_exception                    = 1'b0;
       assign xif_dualwrite                    = 1'b0;
+      assign xif_dualread                     = 1'b0;
+      assign xif_dualread_o                     = 1'b0;
       assign xif_loadstore                    = 1'b0;
 
       assign xif_issue_if.issue_valid         = 1'b0;
@@ -819,6 +789,10 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       assign xif_issue_if.issue_req.ecs       = '0;
       assign xif_issue_if.issue_req.ecs_valid = '0;
 
+      assign xif_offloading_o                 = 1'b0;
+
+      logic unused_xif_signals;
+      assign unused_xif_signals = xif_insn_reject | (|rf_illegal_raddr);
     end
   endgenerate
 

@@ -37,6 +37,7 @@ module cv32e40x_prefetch_unit import cv32e40x_pkg::*;
   input  logic        rst_n,
 
   input  ctrl_fsm_t   ctrl_fsm_i,
+  input  privlvlctrl_t priv_lvl_ctrl_i,
 
   input  logic [31:0] branch_addr_i,
 
@@ -53,7 +54,6 @@ module cv32e40x_prefetch_unit import cv32e40x_pkg::*;
   output logic        trans_valid_o,
   input  logic        trans_ready_i,
   output logic [31:0] trans_addr_o,
-  output logic        trans_ptr_o,
 
   input  logic        resp_valid_i,
   input  inst_resp_t  resp_i,
@@ -100,8 +100,7 @@ module cv32e40x_prefetch_unit import cv32e40x_pkg::*;
     .fetch_priv_lvl_access_o  ( fetch_priv_lvl_resp  ),
     .trans_valid_o            ( trans_valid_o        ),
     .trans_ready_i            ( trans_ready_i        ),
-    .trans_addr_o             ( trans_addr_o         ),
-    .trans_ptr_o              ( trans_ptr_o          )
+    .trans_addr_o             ( trans_addr_o         )
   );
 
 
@@ -116,6 +115,7 @@ module cv32e40x_prefetch_unit import cv32e40x_pkg::*;
     .rst_n                 ( rst_n                   ),
 
     .ctrl_fsm_i            ( ctrl_fsm_i              ),
+    .priv_lvl_ctrl_i       ( priv_lvl_ctrl_i         ),
 
     .branch_addr_i         ( branch_addr_i           ),
     .prefetch_busy_o       ( prefetch_busy_o         ),

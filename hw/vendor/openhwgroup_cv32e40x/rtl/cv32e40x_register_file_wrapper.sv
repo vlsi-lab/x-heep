@@ -39,6 +39,7 @@ module cv32e40x_register_file_wrapper import cv32e40x_pkg::*;
         input  logic         rst_n,
     
         // Read ports
+        input  logic         dualread_i,
         input  rf_addr_t     raddr_i [REGFILE_NUM_READ_PORTS],
         output rf_data_t     rdata_o [REGFILE_NUM_READ_PORTS],
     
@@ -48,6 +49,31 @@ module cv32e40x_register_file_wrapper import cv32e40x_pkg::*;
         input logic         we_i [REGFILE_NUM_WRITE_PORTS]
 );
     
+    rf_addr_t raddr [REGFILE_NUM_READ_PORTS];
+
+    generate
+      if (REGFILE_NUM_READ_PORTS > 2) begin
+        always_comb begin : dualread
+          if (dualread_i) begin
+            raddr[0] = raddr_i[0];
+            raddr[1] = raddr_i[1];
+            raddr[2] = raddr_i[0] ^ 1'b1;
+            raddr[3] = raddr_i[1] ^ 1'b1;
+          end
+          else begin
+            raddr[0] = raddr_i[0];
+            raddr[1] = raddr_i[1];
+            raddr[2] = '0;
+            raddr[3] = '0;
+          end
+        end
+      end else begin
+        assign raddr[0] = raddr_i[0];
+        assign raddr[1] = raddr_i[0];
+      end
+    endgenerate
+    
+
     cv32e40x_register_file
     #(
       .REGFILE_NUM_READ_PORTS       ( REGFILE_NUM_READ_PORTS ),
@@ -59,7 +85,7 @@ module cv32e40x_register_file_wrapper import cv32e40x_pkg::*;
       .rst_n              ( rst_n              ),
     
       // Read ports
-      .raddr_i            ( raddr_i            ),
+      .raddr_i            ( raddr              ),
       .rdata_o            ( rdata_o            ),
     
       // Write ports
@@ -68,6 +94,6 @@ module cv32e40x_register_file_wrapper import cv32e40x_pkg::*;
       .we_i               ( we_i               )
                  
     ); 
-    
+
     endmodule
     

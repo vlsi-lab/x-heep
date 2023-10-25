@@ -40,6 +40,7 @@ module cv32e40x_mpu import cv32e40x_pkg::*;
 
    input logic  atomic_access_i,     // Indicate that ongoing access is atomic
    input logic  misaligned_access_i, // Indicate that ongoing access is part of a misaligned access
+   input logic  modified_access_i,   // Indicate that ongoing access is part of a modified access
 
    // Interface towards bus interface
    input logic  bus_trans_ready_i,
@@ -82,7 +83,6 @@ module cv32e40x_mpu import cv32e40x_pkg::*;
   logic        core_trans_we;
   logic        instr_fetch_access;
   logic        load_access;
-  logic        wpt_match;
   logic        core_trans_debug_region;
 
   // Detect a debug mode transaction to the Debug Module region
@@ -176,9 +176,8 @@ module cv32e40x_mpu import cv32e40x_pkg::*;
 
   // Forward transaction response towards core
   assign core_resp_valid_o      = bus_resp_valid_i || mpu_err_trans_valid;
-  assign core_resp_o.bus_resp   = bus_resp_i.bus_resp;
   assign core_resp_o.mpu_status = mpu_status;
-  assign core_resp_o.align_status = bus_resp_i.align_status;
+
 
   // Report MPU errors to the core immediately
   assign core_mpu_err_o = mpu_err;
@@ -201,6 +200,7 @@ module cv32e40x_mpu import cv32e40x_pkg::*;
     .instr_fetch_access_i       ( instr_fetch_access      ),
     .atomic_access_i            ( atomic_access_i         ),
     .misaligned_access_i        ( misaligned_access_i     ),
+    .modified_access_i          ( modified_access_i       ),
     .load_access_i              ( load_access             ),
     .pma_err_o                  ( pma_err                 ),
     .pma_bufferable_o           ( bus_trans_bufferable    ),
@@ -213,18 +213,19 @@ module cv32e40x_mpu import cv32e40x_pkg::*;
   // Tie to 1'b0 if this MPU is instantiatied in the IF stage
   generate
     if (IF_STAGE) begin: mpu_if
-      assign instr_fetch_access = 1'b1;
-      assign load_access        = 1'b0;
-      assign core_trans_we      = 1'b0;
+      assign instr_fetch_access     = 1'b1;
+      assign load_access            = 1'b0;
+      assign core_trans_we          = 1'b0;
+      assign core_resp_o.bus_resp   = bus_resp_i;
     end
     else begin: mpu_lsu
-      assign instr_fetch_access    = 1'b0;
-      assign load_access           = !core_trans_i.we;
-      assign core_trans_we         = core_trans_i.we;
-      assign core_resp_o.wpt_match = 1'b0; // Will be set by upstream wpt-module within load_store_unit
+      assign instr_fetch_access       = 1'b0;
+      assign load_access              = !core_trans_i.we;
+      assign core_trans_we            = core_trans_i.we;
+      assign core_resp_o.wpt_match    = '0; // Will be set by upstream wpt-module within load_store_unit
+      assign core_resp_o.align_status = bus_resp_i.align_status;
+      assign core_resp_o.bus_resp     = bus_resp_i.bus_resp;
     end
   endgenerate
-
-// TODO:OE any way to check that the 2nd access of a failed misalgn will not reach the MPU?
 
 endmodule

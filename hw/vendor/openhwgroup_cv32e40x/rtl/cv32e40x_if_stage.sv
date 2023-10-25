@@ -62,10 +62,10 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   input  logic [MTVT_ADDR_WIDTH-1:0]   mtvt_addr_i,            // Base address for CLIC vectoring
 
   input ctrl_fsm_t      ctrl_fsm_i,
-  input  logic          trigger_match_i,
+  input  logic [31:0]   trigger_match_i,
 
   // Instruction bus interface
-  if_c_obi.master       m_c_obi_instr_if,
+  cv32e40x_if_c_obi.master m_c_obi_instr_if,
 
   output if_id_pipe_t   if_id_pipe_o,           // IF/ID pipeline stage
   output logic [31:0]   pc_if_o,                // Program counter
@@ -74,7 +74,6 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   output logic          ptr_in_if_o,            // The IF stage currently holds a pointer
   output privlvl_t      priv_lvl_if_o,          // Privilege level of the instruction currently in IF
 
-  output logic          first_op_o,
   output logic          last_op_o,
   output logic          abort_op_o,
 
@@ -82,14 +81,22 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   output logic          if_valid_o,
   input  logic          id_ready_i,
 
+  // Privilege mode
+  input privlvlctrl_t   priv_lvl_ctrl_i,
+
   // eXtension interface
-  if_xif.cpu_compressed xif_compressed_if,      // XIF compressed interface
-  input  logic          xif_offloading_id_i     // ID stage attempts to offload an instruction
+  cv32e40x_if_xif.cpu_compressed xif_compressed_if,      // XIF compressed interface
+  input  logic                   xif_offloading_id_i     // ID stage attempts to offload an instruction
 );
 
   // ALBUF_DEPTH set to 3 as the alignment_buffer will need 3 entries to function correctly
   localparam int unsigned ALBUF_DEPTH     = 3;
   localparam int unsigned ALBUF_CNT_WIDTH = $clog2(ALBUF_DEPTH);
+
+  // Calculate number of bits of mtvt_pc_mux to use in branch_addr_n for CLIC SHV interrupts.
+  // Minimum number of bits to use from ctrl_fsm.mtvt_pc_mux is four to keep 32-bit address 64B aligned.
+  // Otherwise the resulting concatenated address will be less than 32 bits.
+  localparam int unsigned CLIC_MUX_WIDTH = (CLIC_ID_WIDTH < 4) ? 4 : CLIC_ID_WIDTH;
 
   logic              if_ready;
 
@@ -117,7 +124,6 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   logic                       prefetch_trans_valid;
   logic                       prefetch_trans_ready;
   logic [31:0]                prefetch_trans_addr;
-  logic                       prefetch_trans_ptr;
   inst_resp_t                 prefetch_inst_resp;
   logic                       prefetch_one_txn_pend_n;
   logic [ALBUF_CNT_WIDTH-1:0] prefetch_outstnd_cnt_q;
@@ -128,15 +134,6 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   logic              bus_trans_ready;
   obi_inst_req_t     bus_trans;
   obi_inst_req_t     core_trans;
-
-  logic              alcheck_resp_valid;
-  inst_resp_t        alcheck_resp;
-  logic              alcheck_trans_valid;
-  logic              alcheck_trans_ready;
-  obi_inst_req_t     alcheck_trans;
-
-  logic              align_check_en;
-  logic              address_misaligned;
 
   // Local instr_valid
   logic              instr_valid;
@@ -156,6 +153,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   inst_resp_t        seq_instr;       // Instruction for sequenced operation
   logic              seq_tbljmp;      // Sequenced instruction is a table jump
   logic              seq_pushpop;     // Sequenced instruction is a push or pop
+  logic              first_op;
 
   logic              unused_signals;
 
@@ -169,7 +167,9 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
       PC_BOOT:       branch_addr_n = {boot_addr_i[31:2], 2'b0};
       PC_JUMP:       branch_addr_n = jump_target_id_i;
       PC_BRANCH:     branch_addr_n = branch_target_ex_i;
-      PC_MRET:       branch_addr_n = mepc_i;                                                      // PC is restored when returning from IRQ/exception
+      // An mret that restarts a CLIC pointer fetch must make sure the address is aligned to XLEN/8.
+      // Clearing branch_addr_n[1] when an mepc is used as part of CLIC pointer fetch.
+      PC_MRET:       branch_addr_n = {mepc_i[31:2], (mepc_i[1] & !ctrl_fsm_i.pc_set_clicv), mepc_i[0]}; // PC is restored when returning from IRQ/exception
       PC_DRET:       branch_addr_n = dpc_i;
       PC_WB_PLUS4:   branch_addr_n = ctrl_fsm_i.pipe_pc;                                          // Jump to next instruction forces prefetch buffer reload
       PC_TRAP_EXC:   branch_addr_n = {mtvec_addr_i, 7'h0};                                        // All the exceptions go to base address
@@ -177,7 +177,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
       PC_TRAP_DBD:   branch_addr_n = {dm_halt_addr_i[31:2], 2'b0};
       PC_TRAP_DBE:   branch_addr_n = {dm_exception_addr_i[31:2], 2'b0};
       PC_TRAP_NMI:   branch_addr_n = {mtvec_addr_i, ctrl_fsm_i.nmi_mtvec_index, 2'b00};
-      PC_TRAP_CLICV: branch_addr_n = {mtvt_addr_i, ctrl_fsm_i.mtvt_pc_mux[CLIC_ID_WIDTH-1:0], 2'b00};
+      PC_TRAP_CLICV: branch_addr_n = {mtvt_addr_i, ctrl_fsm_i.mtvt_pc_mux[CLIC_MUX_WIDTH-1:0], 2'b00};
       // CLIC and Zc* spec requires to clear bit 0. This clearing is done in the alignment buffer.
       PC_POINTER :   branch_addr_n = if_id_pipe_o.ptr;
       // JVT + (index << 2)
@@ -203,6 +203,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
     .rst_n                    ( rst_n                       ),
 
     .ctrl_fsm_i               ( ctrl_fsm_i                  ),
+    .priv_lvl_ctrl_i          ( priv_lvl_ctrl_i             ),
 
     .branch_addr_i            ( {branch_addr_n[31:1], 1'b0} ),
 
@@ -218,7 +219,6 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
     .trans_valid_o            ( prefetch_trans_valid        ),
     .trans_ready_i            ( prefetch_trans_ready        ),
     .trans_addr_o             ( prefetch_trans_addr         ),
-    .trans_ptr_o              ( prefetch_trans_ptr          ),
 
     .resp_valid_i             ( prefetch_resp_valid         ),
     .resp_i                   ( prefetch_inst_resp          ),
@@ -245,7 +245,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
     .A_EXT                ( A_EXT                       ),
     .CORE_REQ_TYPE        ( obi_inst_req_t              ),
     .CORE_RESP_TYPE       ( inst_resp_t                 ),
-    .BUS_RESP_TYPE        ( inst_resp_t                 ),
+    .BUS_RESP_TYPE        ( obi_inst_resp_t             ),
     .PMA_NUM_REGIONS      ( PMA_NUM_REGIONS             ),
     .PMA_CFG              ( PMA_CFG                     ),
     .DEBUG                ( DEBUG                       ),
@@ -261,6 +261,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
                                                            // Misaligned access to main is allowed, and accesses outside main will
                                                            // result in instruction access fault (which will have priority over
                                                            //  misaligned from I/O fault)
+    .modified_access_i    ( 1'b0                        ), // Prefetcher will never issue a modified request
     .core_one_txn_pend_n  ( prefetch_one_txn_pend_n     ),
     .core_mpu_err_wait_i  ( 1'b1                        ),
     .core_mpu_err_o       (                             ), // Unconnected on purpose
@@ -271,48 +272,13 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
     .core_resp_valid_o    ( prefetch_resp_valid         ),
     .core_resp_o          ( prefetch_inst_resp          ),
 
-    .bus_trans_valid_o    ( alcheck_trans_valid         ),
-    .bus_trans_ready_i    ( alcheck_trans_ready         ),
-    .bus_trans_o          ( alcheck_trans               ),
-    .bus_resp_valid_i     ( alcheck_resp_valid          ),
-    .bus_resp_i           ( alcheck_resp                )
+    .bus_trans_valid_o    ( bus_trans_valid             ),
+    .bus_trans_ready_i    ( bus_trans_ready             ),
+    .bus_trans_o          ( bus_trans                   ),
+    .bus_resp_valid_i     ( bus_resp_valid              ),
+    .bus_resp_i           ( bus_resp                    )
   );
 
-
-  assign align_check_en = prefetch_trans_ptr;
-  assign address_misaligned = |prefetch_trans_addr[1:0];
-
-  cv32e40x_align_check
-  #(
-    .IF_STAGE             ( 1                    ),
-    .CORE_RESP_TYPE       ( inst_resp_t          ),
-    .BUS_RESP_TYPE        ( obi_inst_resp_t      ),
-    .CORE_REQ_TYPE        ( obi_inst_req_t       )
-  )
-  align_check_i
-  (
-    .clk                  ( clk                     ),
-    .rst_n                ( rst_n                   ),
-    .align_check_en_i     ( align_check_en          ),
-    .misaligned_access_i  ( address_misaligned      ),
-
-    .core_one_txn_pend_n  ( prefetch_one_txn_pend_n ),
-    .core_align_err_wait_i( 1'b1                    ),
-    .core_align_err_o     (                         ), // Unconnected on purpose
-
-    .core_trans_valid_i   ( alcheck_trans_valid     ),
-    .core_trans_ready_o   ( alcheck_trans_ready     ),
-    .core_trans_i         ( alcheck_trans           ),
-    .core_resp_valid_o    ( alcheck_resp_valid      ),
-    .core_resp_o          ( alcheck_resp            ),
-
-    .bus_trans_valid_o    ( bus_trans_valid         ),
-    .bus_trans_ready_i    ( bus_trans_ready         ),
-    .bus_trans_o          ( bus_trans               ),
-    .bus_resp_valid_i     ( bus_resp_valid          ),
-    .bus_resp_i           ( bus_resp                )
-
-  );
 
   //////////////////////////////////////////////////////////////////////////////
   // OBI interface
@@ -374,14 +340,13 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   // Any other instruction will be single operation, and gets first_op=1.
   // Regular CLIC pointers are single operation with first_op == last_op == 1
   // CLIC pointers that are a side effect of mret instructions will have first_op == 0 and last_op == 1
-  assign first_op_o = seq_valid                ? seq_first :  // Sequencer controls first_op for sequenced instructions
-                      prefetch_is_mret_ptr     ? 1'b0      :  // clic pointer caused by mret, must be !first && last
-                                                 1'b1;        // Any other regular instructions are single operation.
+  assign first_op = seq_valid                ? seq_first :  // Sequencer controls first_op for sequenced instructions
+                    prefetch_is_mret_ptr     ? 1'b0      :  // clic pointer caused by mret, must be !first && last
+                                               1'b1;        // Any other regular instructions are single operation.
 
 
   // Set flag to indicate that instruction/sequence will be aborted due to known exceptions or trigger match
-  assign abort_op_o = instr_decompressed.bus_resp.err || (instr_decompressed.mpu_status != MPU_OK) ||
-                      (instr_decompressed.align_status != ALIGN_OK) || trigger_match_i;
+  assign abort_op_o = instr_decompressed.bus_resp.err || (instr_decompressed.mpu_status != MPU_OK) || |trigger_match_i;
 
   // Signal current privilege level of IF
   assign priv_lvl_if_o = prefetch_priv_lvl;
@@ -402,7 +367,6 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   end
 
   // IF-ID pipeline registers, frozen when the ID stage is stalled
-  // Todo: E40S: We will probably need to prevent dummy instructions between pointer fetcher and the pointer target fetch
   always_ff @(posedge clk, negedge rst_n)
   begin : IF_ID_PIPE_REGISTERS
     if (rst_n == 1'b0) begin
@@ -413,7 +377,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
       if_id_pipe_o.illegal_c_insn   <= 1'b0;
       if_id_pipe_o.compressed_instr <= '0;
       if_id_pipe_o.priv_lvl         <= PRIV_LVL_M;
-      if_id_pipe_o.trigger_match    <= 1'b0;
+      if_id_pipe_o.trigger_match    <= '0;
       if_id_pipe_o.xif_id           <= '0;
       if_id_pipe_o.ptr              <= '0;
       if_id_pipe_o.last_op          <= 1'b0;
@@ -432,9 +396,9 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
 
         if_id_pipe_o.priv_lvl         <= prefetch_priv_lvl;
         if_id_pipe_o.trigger_match    <= trigger_match_i;
-        if_id_pipe_o.xif_id           <= xif_id;
+        if_id_pipe_o.xif_id           <= 32'(xif_id);
         if_id_pipe_o.last_op          <= last_op_o;
-        if_id_pipe_o.first_op         <= first_op_o;
+        if_id_pipe_o.first_op         <= first_op;
         if_id_pipe_o.abort_op         <= abort_op_o;
 
         // No PC update for tablejump pointer, PC of instruction itself is needed later.
@@ -446,7 +410,7 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
           // For mret pointers, the pointer address is only needed downstream if the pointer fetch fails.
           // If the pointer fetch is successful, the address of the mret (i.e. the previous PC) is needed.
           if(prefetch_is_mret_ptr ?
-             (instr_decompressed.bus_resp.err || (instr_decompressed.mpu_status != MPU_OK) || (instr_decompressed.align_status != ALIGN_OK)) :
+             (instr_decompressed.bus_resp.err || (instr_decompressed.mpu_status != MPU_OK)) :
              1'b1) begin
             if_id_pipe_o.pc                    <= pc_if_o;
           end
@@ -470,7 +434,6 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
           // Need to update bus error status and mpu status, but may omit the 32-bit instruction word
           if_id_pipe_o.instr.bus_resp.err <= instr_decompressed.bus_resp.err;
           if_id_pipe_o.instr.mpu_status   <= instr_decompressed.mpu_status;
-          if_id_pipe_o.instr.align_status <= instr_decompressed.align_status;
         end else begin
           // Regular instruction, update the whole instr field
           if_id_pipe_o.instr          <= seq_valid ? seq_instr : instr_decompressed;
@@ -555,11 +518,11 @@ module cv32e40x_if_stage import cv32e40x_pkg::*;
   generate
     if (X_EXT) begin : x_ext
 
-      // TODO: implement offloading of compressed instruction
+      // TODO:XIF implement offloading of compressed instruction
       assign xif_compressed_if.compressed_valid = '0;
       assign xif_compressed_if.compressed_req   = '0;
 
-      // TODO: assert that the oustanding IDs are unique
+      // TODO:XIF assert that the oustanding IDs are unique
       assign xif_id = xif_offloading_id_i ? if_id_pipe_o.xif_id + 1 : if_id_pipe_o.xif_id;
 
     end else begin : no_x_ext

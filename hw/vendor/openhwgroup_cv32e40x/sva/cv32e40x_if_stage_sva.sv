@@ -33,7 +33,7 @@ module cv32e40x_if_stage_sva
   input logic           if_ready,
   input logic           if_valid_o,
   input  ctrl_fsm_t     ctrl_fsm_i,
-  if_c_obi.monitor      m_c_obi_instr_if,
+  cv32e40x_if_c_obi.monitor m_c_obi_instr_if,
   input  logic          seq_valid,
   input  logic          seq_ready,
   input  logic          illegal_c_insn,
@@ -42,8 +42,6 @@ module cv32e40x_if_stage_sva
   input  logic          prefetch_is_clic_ptr,
   input  logic          prefetch_is_mret_ptr,
   input  logic [31:0]   branch_addr_n,
-  input  logic          align_err_i,
-  input  logic          alcheck_trans_valid,
   input  logic          id_ready_i,
   input  logic          ptr_in_if_o
 );
@@ -112,31 +110,11 @@ module cv32e40x_if_stage_sva
     a_aligned_mret_ptr:
       assert property (@(posedge clk) disable iff (!rst_n)
                       (ctrl_fsm_i.pc_set_clicv) &&
-                      (ctrl_fsm_i.pc_mux == PC_MRET) &&
-                      (branch_addr_n[1:0] != 2'b00)
+                      (ctrl_fsm_i.pc_mux == PC_MRET)
                       |->
-                      align_err_i
-                      )
-          else `uvm_error("if_stage", "Misaligned mret pointer not flagged with error")
+                      (branch_addr_n[1:0] == 2'b00))
+          else `uvm_error("if_stage", "Misaligned mret pointer")
 
-    // Aligned errors may only happen for mret pointers that are not otherwise blocked by the MPU
-    a_aligned_err_mret_ptr:
-      assert property (@(posedge clk) disable iff (!rst_n)
-                      align_err_i &&            // Alignment error flagged
-                      alcheck_trans_valid       // Transaction not blocked by MPU
-                      |->
-                      ((ctrl_fsm_i.pc_set_clicv) &&     // We have a pc_set for an mret pointer this cycle
-                      (ctrl_fsm_i.pc_mux == PC_MRET))
-                      or
-                      prefetch_is_mret_ptr)             // Or the trans_valid comes after the pc_set and an mret pointer is flagged
-          else `uvm_error("if_stage", "Alignment error withouth mret pointer")
-  end else begin
-
-    // Without CLIC support there shall never be an aligned error in the IF stage.
-    a_no_align_err:
-      assert property (@(posedge clk) disable iff (!rst_n)
-                      !align_err_i)
-          else `uvm_error("if_stage", "Alignment error withouth CLIC support.")
   end
 
   // Tablejump pointer shall always be aligned
