@@ -116,7 +116,7 @@ module testharness #(
   logic [EXT_DOMAINS_RND-1:0] external_subsystem_clkgate_en_n;
 
   // eXtension Interface
-  if_xif #(
+  cv32e40x_if_xif #(
       .X_NUM_RS(fpu_ss_pkg::X_NUM_RS),
       .X_ID_WIDTH(fpu_ss_pkg::X_ID_WIDTH),
       .X_MEM_WIDTH(fpu_ss_pkg::X_MEM_WIDTH),
