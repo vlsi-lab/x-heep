@@ -270,12 +270,12 @@ module core_v_mini_mcu
 
 
     // eXtension interface
-    if_xif.cpu_compressed xif_compressed_if,
-    if_xif.cpu_issue      xif_issue_if,
-    if_xif.cpu_commit     xif_commit_if,
-    if_xif.cpu_mem        xif_mem_if,
-    if_xif.cpu_mem_result xif_mem_result_if,
-    if_xif.cpu_result     xif_result_if,
+    cv32e40x_if_xif.cpu_compressed xif_compressed_if,
+    cv32e40x_if_xif.cpu_issue      xif_issue_if,
+    cv32e40x_if_xif.cpu_commit     xif_commit_if,
+    cv32e40x_if_xif.cpu_mem        xif_mem_if,
+    cv32e40x_if_xif.cpu_mem_result xif_mem_result_if,
+    cv32e40x_if_xif.cpu_result     xif_result_if,
 
     output reg_req_t pad_req_o,
     input  reg_rsp_t pad_resp_i,

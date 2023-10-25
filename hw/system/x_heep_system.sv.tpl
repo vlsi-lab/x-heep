@@ -49,12 +49,12 @@ module x_heep_system
     output logic [31:0] exit_value_o,
 
     // eXtension interface
-    if_xif.cpu_compressed xif_compressed_if,
-    if_xif.cpu_issue      xif_issue_if,
-    if_xif.cpu_commit     xif_commit_if,
-    if_xif.cpu_mem        xif_mem_if,
-    if_xif.cpu_mem_result xif_mem_result_if,
-    if_xif.cpu_result     xif_result_if,
+    cv32e40x_if_xif.cpu_compressed xif_compressed_if,
+    cv32e40x_if_xif.cpu_issue      xif_issue_if,
+    cv32e40x_if_xif.cpu_commit     xif_commit_if,
+    cv32e40x_if_xif.cpu_mem        xif_mem_if,
+    cv32e40x_if_xif.cpu_mem_result xif_mem_result_if,
+    cv32e40x_if_xif.cpu_result     xif_result_if,
 
 % for pad in total_pad_list:
 ${pad.x_heep_system_interface}

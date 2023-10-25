@@ -11,8 +11,8 @@ filesets:
   files_rtl:
     files:
       - openhwgroup_cv32e40x/rtl/include/cv32e40x_pkg.sv
-      - openhwgroup_cv32e40x/rtl/if_c_obi.sv
-      - openhwgroup_cv32e40x/rtl/if_xif.sv
+      - openhwgroup_cv32e40x/rtl/cv32e40x_if_c_obi.sv
+      - openhwgroup_cv32e40x/rtl/cv32e40x_if_xif.sv
       - openhwgroup_cv32e40x/rtl/cv32e40x_if_stage.sv
       - openhwgroup_cv32e40x/rtl/cv32e40x_csr.sv
       - openhwgroup_cv32e40x/rtl/cv32e40x_debug_triggers.sv

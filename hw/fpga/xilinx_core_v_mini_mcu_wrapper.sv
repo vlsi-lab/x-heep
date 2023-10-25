@@ -88,7 +88,7 @@ module xilinx_core_v_mini_mcu_wrapper
   end
 
   // eXtension Interface
-  if_xif #() ext_if ();
+  cv32e40x_if_xif #() ext_if ();
 
   // clock output for debugging
   assign clk_out = clk_gen;
