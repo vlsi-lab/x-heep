@@ -9,6 +9,6 @@
   upstream:
   {
     url: https://github.com/Luigi2898/cv32e40x.git
-    rev: c7080d73b8187f7d896abd1441227c96c30a8fca
+    rev: 8cc26d7e451ed89691c4eb3bc8ecdf04d6f7f63c
   }
 }
