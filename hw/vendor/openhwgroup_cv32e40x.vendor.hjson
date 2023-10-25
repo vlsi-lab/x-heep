@@ -7,7 +7,7 @@
 
   upstream: {
     url: "https://github.com/Luigi2898/cv32e40x.git",
-    rev: "featrure/dualread",
+    rev: "feature/dualread",
   },
 
   exclude_from_upstream: [
