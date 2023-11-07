@@ -45,7 +45,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
   parameter bit                         CLIC                                    = 0,
   parameter int unsigned                CLIC_ID_WIDTH                           = 5,
   parameter bit                         X_EXT                                   = 0,
-  parameter bit                         X_DUALREAD 
+  parameter bit                         X_DUALREAD                              = 1,
   parameter bit                         X_DUALWRITE                             = 1,
   parameter int unsigned                X_NUM_RS                                = 2,
   parameter int unsigned                X_ID_WIDTH                              = 4,
