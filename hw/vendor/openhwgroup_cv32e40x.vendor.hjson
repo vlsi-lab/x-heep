@@ -6,8 +6,8 @@
   target_dir: "openhwgroup_cv32e40x",
 
   upstream: {
-    url: "https://github.com/Luigi2898/cv32e40x.git",
-    rev: "feature/dualread",
+    url: "https://github.com/vlsi-lab/cv32e40x.git",
+    rev: "feature/dualread_dualwrite",
   },
 
   exclude_from_upstream: [
