@@ -6,7 +6,7 @@
   target_dir: "openhwgroup_cv32e40x",
 
   upstream: {
-    url: "https://github.com/Luigi2898/cv32e40x.git",
+    url: "https://github.com/vlsi-lab/cv32e40x.git",
     rev: "feature/dualread",
   },
 
@@ -17,4 +17,7 @@
     "cv32e40x_manifest.flist",
     "docs",
   ]
+
+  patch_dir: "patches/openhwgroup_cv32e40x",
+  
 }

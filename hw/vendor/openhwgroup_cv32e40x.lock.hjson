@@ -8,7 +8,7 @@
 {
   upstream:
   {
-    url: https://github.com/Luigi2898/cv32e40x.git
-    rev: 8cc26d7e451ed89691c4eb3bc8ecdf04d6f7f63c
+    url: https://github.com/vlsi-lab/cv32e40x.git
+    rev: c2555efb2c9aeb7f78738c5e24a4ebcaf1059bb9
   }
 }
