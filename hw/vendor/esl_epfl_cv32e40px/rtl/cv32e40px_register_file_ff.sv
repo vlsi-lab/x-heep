@@ -44,15 +44,15 @@ module cv32e40px_register_file #(
     input logic dualread_i,
 
     //Read port R1
-    input  logic [ADDR_WIDTH-1:0] raddr_a_i,
+    input logic [ADDR_WIDTH-1:0] raddr_a_i,
     output logic [X_DUALREAD:0][DATA_WIDTH-1:0] rdata_a_o,
 
     //Read port R2
-    input  logic [ADDR_WIDTH-1:0] raddr_b_i,
+    input logic [ADDR_WIDTH-1:0] raddr_b_i,
     output logic [X_DUALREAD:0][DATA_WIDTH-1:0] rdata_b_o,
 
     //Read port R3
-    input  logic [ADDR_WIDTH-1:0] raddr_c_i,
+    input logic [ADDR_WIDTH-1:0] raddr_c_i,
     output logic [X_DUALREAD:0][DATA_WIDTH-1:0] rdata_c_o,
 
     // Write port W1
@@ -126,8 +126,8 @@ module cv32e40px_register_file #(
   //-----------------------------------------------------------------------------
 
   // Mask top bit of write address to disable fp regfile
-  assign waddr_a   = waddr_a_i;
-  assign waddr_b   = waddr_b_i;
+  assign waddr_a = waddr_a_i;
+  assign waddr_b = waddr_b_i;
 
   genvar gidx;
   generate

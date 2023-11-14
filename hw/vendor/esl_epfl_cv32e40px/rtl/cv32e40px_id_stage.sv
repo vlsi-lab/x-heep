@@ -302,7 +302,7 @@ module cv32e40px_id_stage
   localparam REG_D_MSB = 11;
   localparam REG_D_LSB = 7;
 
-  localparam REGFILE_NUM_READ_PORTS = (COREV_X_IF & X_DUALREAD) ? 2 : 1; 
+  localparam REGFILE_NUM_READ_PORTS = (COREV_X_IF & X_DUALREAD) ? 2 : 1;
 
   logic [31:0] instr;
 
@@ -1037,44 +1037,44 @@ module cv32e40px_id_stage
   // |_| \_\_____\____|___|____/ |_| |_____|_| \_\____/  //
   //                                                     //
   /////////////////////////////////////////////////////////
-  
-      cv32e40px_register_file #(
-        .ADDR_WIDTH(6),
-        .DATA_WIDTH(32),
-        .FPU       (FPU),
-        .ZFINX     (ZFINX),
-        .COREV_X_IF(COREV_X_IF),
-        .X_DUALREAD(X_DUALREAD)
-      ) register_file_i (
-        .clk  (clk),
-        .rst_n(rst_n),
 
-        .scan_cg_en_i(scan_cg_en_i),
+  cv32e40px_register_file #(
+      .ADDR_WIDTH(6),
+      .DATA_WIDTH(32),
+      .FPU       (FPU),
+      .ZFINX     (ZFINX),
+      .COREV_X_IF(COREV_X_IF),
+      .X_DUALREAD(X_DUALREAD)
+  ) register_file_i (
+      .clk  (clk),
+      .rst_n(rst_n),
 
-        .dualread_i(x_issue_resp_i.dualread),
+      .scan_cg_en_i(scan_cg_en_i),
 
-        // Read port a
-        .raddr_a_i(regfile_addr_ra_id),
-        .rdata_a_o(regfile_data_ra_id),
+      .dualread_i(x_issue_resp_i.dualread),
 
-        // Read port b
-        .raddr_b_i(regfile_addr_rb_id),
-        .rdata_b_o(regfile_data_rb_id),
+      // Read port a
+      .raddr_a_i(regfile_addr_ra_id),
+      .rdata_a_o(regfile_data_ra_id),
 
-        // Read port c
-        .raddr_c_i(regfile_addr_rc_id),
-        .rdata_c_o(regfile_data_rc_id),
+      // Read port b
+      .raddr_b_i(regfile_addr_rb_id),
+      .rdata_b_o(regfile_data_rb_id),
 
-        // Write port a
-        .waddr_a_i(regfile_waddr_wb_i),
-        .wdata_a_i(regfile_wdata_wb_i),
-        .we_a_i   (regfile_we_wb_i),
+      // Read port c
+      .raddr_c_i(regfile_addr_rc_id),
+      .rdata_c_o(regfile_data_rc_id),
 
-        // Write port b
-        .waddr_b_i(regfile_alu_waddr_fw_i),
-        .wdata_b_i(regfile_alu_wdata_fw_i),
-        .we_b_i   (regfile_alu_we_fw_i)
-      );
+      // Write port a
+      .waddr_a_i(regfile_waddr_wb_i),
+      .wdata_a_i(regfile_wdata_wb_i),
+      .we_a_i   (regfile_we_wb_i),
+
+      // Write port b
+      .waddr_b_i(regfile_alu_waddr_fw_i),
+      .wdata_b_i(regfile_alu_wdata_fw_i),
+      .we_b_i   (regfile_alu_we_fw_i)
+  );
 
   logic [1:0] x_mem_data_type_id;
 
@@ -1186,16 +1186,16 @@ module cv32e40px_id_stage
         for (genvar i = 0; i < 3; i++) begin : xif_operand_assignment
           always_comb begin
             if (i == 0) begin
-              x_issue_req_o.rs[i + 3 * j] = regfile_data_ra_id[j];
+              x_issue_req_o.rs[i+3*j] = regfile_data_ra_id[j];
             end else if (i == 1) begin
-              x_issue_req_o.rs[i + 3 * j] = regfile_data_rb_id[j];
+              x_issue_req_o.rs[i+3*j] = regfile_data_rb_id[j];
             end else begin
-              x_issue_req_o.rs[i + 3 * j] = regfile_data_rc_id[j];
+              x_issue_req_o.rs[i+3*j] = regfile_data_rc_id[j];
             end
             if (x_ex_fwd[i]) begin
-              x_issue_req_o.rs[i + 3 * j] = result_fw_to_x_i;
+              x_issue_req_o.rs[i+3*j] = result_fw_to_x_i;
             end else if (x_wb_fwd[i]) begin
-              x_issue_req_o.rs[i + 3 * j] = regfile_wdata_wb_i;
+              x_issue_req_o.rs[i+3*j] = regfile_wdata_wb_i;
             end
           end
         end

@@ -27,17 +27,17 @@ module cv32e40px_x_disp
     input logic rst_ni,
 
     // compressed interface
-    output logic [3:0] x_compressed_id_o,
+    output logic [              3:0] x_compressed_id_o,
     // issue interface
-    output logic       x_issue_valid_o,
-    input  logic       x_issue_ready_i,
-    input  logic       x_issue_resp_accept_i,
-    input  logic       x_issue_resp_writeback_i,
-    input  logic       x_issue_resp_loadstore_i,  // unused
-    output logic [2:0] x_issue_req_rs_valid_o,
-    output logic [3:0] x_issue_req_id_o,
-    output logic [1:0] x_issue_req_mode_o,
-    output logic       x_issue_req_ecs_valid,
+    output logic                     x_issue_valid_o,
+    input  logic                     x_issue_ready_i,
+    input  logic                     x_issue_resp_accept_i,
+    input  logic                     x_issue_resp_writeback_i,
+    input  logic                     x_issue_resp_loadstore_i,  // unused
+    output logic [RF_READ_PORTS-1:0] x_issue_req_rs_valid_o,
+    output logic [              3:0] x_issue_req_id_o,
+    output logic [              1:0] x_issue_req_mode_o,
+    output logic                     x_issue_req_ecs_valid,
 
     // commit interface
     output logic       x_commit_valid_o,
@@ -65,19 +65,19 @@ module cv32e40px_x_disp
     input  logic       x_result_we_i,
 
     // scoreboard, dependency check, stall, forwarding
-    input  logic [4:0]      waddr_id_i,
-    input  logic [4:0]      waddr_ex_i,
-    input  logic [4:0]      waddr_wb_i,
-    input  logic            we_ex_i,
-    input  logic            we_wb_i,
-    input  logic [4:0]      mem_instr_waddr_ex_i,
-    input  logic            mem_instr_we_ex_i,
-    input  logic [2:0]      regs_used_i,
-    input  logic            branch_or_jump_i,
-    input  logic            instr_valid_i,
-    input  logic [2:0][4:0] x_rs_addr_i,
-    output logic [2:0]      x_ex_fwd_o,
-    output logic [2:0]      x_wb_fwd_o,
+    input  logic [              4:0]      waddr_id_i,
+    input  logic [              4:0]      waddr_ex_i,
+    input  logic [              4:0]      waddr_wb_i,
+    input  logic                          we_ex_i,
+    input  logic                          we_wb_i,
+    input  logic [              4:0]      mem_instr_waddr_ex_i,
+    input  logic                          mem_instr_we_ex_i,
+    input  logic [              2:0]      regs_used_i,
+    input  logic                          branch_or_jump_i,
+    input  logic                          instr_valid_i,
+    input  logic [RF_READ_PORTS-1:0][4:0] x_rs_addr_i,
+    output logic [RF_READ_PORTS-1:0]      x_ex_fwd_o,
+    output logic [              2:0]      x_wb_fwd_o,
 
     // memory request core-internal status signals
     output logic x_mem_data_req_o,
@@ -109,14 +109,31 @@ module cv32e40px_x_disp
   // issue interface
   assign x_issue_valid_o = x_illegal_insn_dec_i & ~branch_or_jump_i & ~instr_offloaded_q & instr_valid_i & ~illegal_forwarding_prevention;
   assign x_issue_req_id_o = id_q;
-  assign x_issue_req_rs_valid_o[0] = (~scoreboard_q[x_rs_addr_i[0]] | x_ex_fwd_o[0] | x_wb_fwd_o[0])
-                                     & ~(x_rs_addr_i[0] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[0] == waddr_wb_i & ~ex_valid_i);
-  assign x_issue_req_rs_valid_o[1] = (~scoreboard_q[x_rs_addr_i[1]] | x_ex_fwd_o[1] | x_wb_fwd_o[1])
-                                     & ~(x_rs_addr_i[1] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[1] == waddr_wb_i & ~ex_valid_i);
-  assign x_issue_req_rs_valid_o[2] = (~scoreboard_q[x_rs_addr_i[2]] | x_ex_fwd_o[2] | x_wb_fwd_o[2])
-                                     & ~(x_rs_addr_i[2] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[2] == waddr_wb_i & ~ex_valid_i);
-  assign x_issue_req_ecs_valid = 1'b1;  // extension context status is not implemented in cv32e40px
-
+  generate
+    if (X_DUALREAD != 0) begin
+      assign x_issue_req_rs_valid_o[0] = (~scoreboard_q[x_rs_addr_i[0]] | x_ex_fwd_o[0] | x_wb_fwd_o[0])
+                                         & ~(x_rs_addr_i[0] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[0] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[1] = (~scoreboard_q[x_rs_addr_i[1]] | x_ex_fwd_o[1] | x_wb_fwd_o[1])
+                                         & ~(x_rs_addr_i[1] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[1] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[2] = (~scoreboard_q[x_rs_addr_i[2]] | x_ex_fwd_o[2] | x_wb_fwd_o[2])
+                                         & ~(x_rs_addr_i[2] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[2] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[3] = (~scoreboard_q[x_rs_addr_i[3]] | x_ex_fwd_o[3] | x_wb_fwd_o[3])
+                                         & ~(x_rs_addr_i[3] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[3] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[4] = (~scoreboard_q[x_rs_addr_i[4]] | x_ex_fwd_o[4] | x_wb_fwd_o[4])
+                                         & ~(x_rs_addr_i[4] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[4] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[5] = (~scoreboard_q[x_rs_addr_i[5]] | x_ex_fwd_o[5] | x_wb_fwd_o[5])
+                                         & ~(x_rs_addr_i[5] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[5] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_ecs_valid = 1'b1;  // extension context status is not implemented in cv32e40px
+    end else begin
+      assign x_issue_req_rs_valid_o[0] = (~scoreboard_q[x_rs_addr_i[0]] | x_ex_fwd_o[0] | x_wb_fwd_o[0])
+                                         & ~(x_rs_addr_i[0] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[0] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[1] = (~scoreboard_q[x_rs_addr_i[1]] | x_ex_fwd_o[1] | x_wb_fwd_o[1])
+                                         & ~(x_rs_addr_i[1] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[1] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_rs_valid_o[2] = (~scoreboard_q[x_rs_addr_i[2]] | x_ex_fwd_o[2] | x_wb_fwd_o[2])
+                                         & ~(x_rs_addr_i[2] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[2] == waddr_wb_i & ~ex_valid_i);
+      assign x_issue_req_ecs_valid = 1'b1;  // extension context status is not implemented in cv32e40px
+    end
+  endgenerate
   // commit interface
   assign x_commit_valid_o = x_issue_valid_o;
   assign x_commit_id_o = id_q;
@@ -147,15 +164,32 @@ module cv32e40px_x_disp
   assign x_if_memory_instr = x_mem_data_req_o & ~(x_issue_valid_o & x_issue_ready_i);
   assign x_if_not_ready = x_issue_valid_o & ~x_issue_ready_i;
 
-  assign illegal_forwarding_prevention = x_result_valid_i & (x_ex_fwd_o[0] | x_ex_fwd_o[1] | x_ex_fwd_o[2]);
+  assign illegal_forwarding_prevention = x_result_valid_i & (|x_ex_fwd_o);
 
   // forwarding
-  assign x_ex_fwd_o[0] = x_rs_addr_i[0] == waddr_ex_i & we_ex_i & ex_valid_i;
-  assign x_ex_fwd_o[1] = x_rs_addr_i[1] == waddr_ex_i & we_ex_i & ex_valid_i;
-  assign x_ex_fwd_o[2] = x_rs_addr_i[2] == waddr_ex_i & we_ex_i & ex_valid_i;
-  assign x_wb_fwd_o[0] = x_rs_addr_i[0] == waddr_wb_i & we_wb_i & ex_valid_i;
-  assign x_wb_fwd_o[1] = x_rs_addr_i[1] == waddr_wb_i & we_wb_i & ex_valid_i;
-  assign x_wb_fwd_o[2] = x_rs_addr_i[2] == waddr_wb_i & we_wb_i & ex_valid_i;
+  generate
+    if (X_DUALREAD != 0) begin
+      assign x_ex_fwd_o[0] = x_rs_addr_i[0] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[1] = x_rs_addr_i[1] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[2] = x_rs_addr_i[2] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[3] = x_rs_addr_i[3] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[4] = x_rs_addr_i[4] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[5] = x_rs_addr_i[5] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_wb_fwd_o[0] = x_rs_addr_i[0] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[1] = x_rs_addr_i[1] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[2] = x_rs_addr_i[2] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[3] = x_rs_addr_i[3] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[4] = x_rs_addr_i[4] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[5] = x_rs_addr_i[5] == waddr_wb_i & we_wb_i & ex_valid_i;
+    end else begin
+      assign x_ex_fwd_o[0] = x_rs_addr_i[0] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[1] = x_rs_addr_i[1] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_ex_fwd_o[2] = x_rs_addr_i[2] == waddr_ex_i & we_ex_i & ex_valid_i;
+      assign x_wb_fwd_o[0] = x_rs_addr_i[0] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[1] = x_rs_addr_i[1] == waddr_wb_i & we_wb_i & ex_valid_i;
+      assign x_wb_fwd_o[2] = x_rs_addr_i[2] == waddr_wb_i & we_wb_i & ex_valid_i;
+    end
+  endgenerate
 
   // id generation
   assign x_compressed_id_o = id_d;

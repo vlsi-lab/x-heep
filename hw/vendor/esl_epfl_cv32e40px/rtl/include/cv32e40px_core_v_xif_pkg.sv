@@ -24,6 +24,7 @@ package cv32e40px_core_v_xif_pkg;
   parameter logic [1:0] X_ECS_XS = '0;
 
   localparam int XLEN = 32;
+  localparam int RF_READ_PORTS = X_DUALREAD ? 2 * X_NUM_RS : X_NUM_RS;
 
   typedef struct packed {
     logic [15:0] instr;  // Offloaded compressed instruction
@@ -35,8 +36,6 @@ package cv32e40px_core_v_xif_pkg;
     logic [31:0] instr;  // Uncompressed instruction
     logic accept;  // Is the offloaded compressed instruction (id) accepted by the coprocessor?
   } x_compressed_resp_t;
-
-  localparam integer RF_READ_PORTS = X_DUALREAD ? 2 * X_NUM_RS : X_NUM_RS;
 
   typedef struct packed {
     logic [31:0] instr;  // Offloaded instruction
