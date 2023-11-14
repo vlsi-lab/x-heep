@@ -6,8 +6,8 @@
   target_dir: "esl_epfl_cv32e40px",
 
   upstream: {
-    url: "https://github.com/esl-epfl/cv32e40px.git",
-    rev: "acf3442b414725191fb7a2027facd0b5b4123c1c",
+    url: "https://github.com/vlsi-lab/cv32e40px.git",
+    rev: "feature/dualread",
   },
 
   patch_dir: "patches/esl_epfl_cv32e40px",
