@@ -7,7 +7,7 @@
 
   upstream: {
     url: "https://github.com/vlsi-lab/cv32e40px.git",
-    rev: "feature/dualread",
+    rev: "feature_dualread_dualwrite",
   },
 
   patch_dir: "patches/esl_epfl_cv32e40px",
