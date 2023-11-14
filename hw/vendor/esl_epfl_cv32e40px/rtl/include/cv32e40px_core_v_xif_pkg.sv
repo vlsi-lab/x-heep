@@ -36,12 +36,14 @@ package cv32e40px_core_v_xif_pkg;
     logic accept;  // Is the offloaded compressed instruction (id) accepted by the coprocessor?
   } x_compressed_resp_t;
 
+  localparam integer RF_READ_PORTS = X_DUALREAD ? 2 * X_NUM_RS : X_NUM_RS;
+
   typedef struct packed {
     logic [31:0] instr;  // Offloaded instruction
     logic [1:0] mode;  // Privilege level
     logic [X_ID_WIDTH-1:0] id;  // Identification of the offloaded instruction
-    logic [(X_NUM_RS + X_NUM_RS * 2 * X_DUALREAD)  -1:0][X_RFR_WIDTH-1:0] rs;        // Register file source operands for the offloaded instruction
-    logic [X_NUM_RS  -1:0] rs_valid;  // Validity of the register file source operand(s)
+    logic [RF_READ_PORTS-1:0][X_RFR_WIDTH-1:0] rs;        // Register file source operands for the offloaded instruction
+    logic [RF_READ_PORTS-1:0] rs_valid;  // Validity of the register file source operand(s)
     logic [5:0] ecs;  // Extension Context Status ({mstatus.xs, mstatus.fs, mstatus.vs})
     logic ecs_valid;  // Validity of the Extension Context Status
   } x_issue_req_t;

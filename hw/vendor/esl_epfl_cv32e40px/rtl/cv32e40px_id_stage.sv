@@ -1192,12 +1192,10 @@ module cv32e40px_id_stage
             end else begin
               x_issue_req_o.rs[i + 3 * j] = regfile_data_rc_id[j];
             end
-            if (j == 0) begin
-              if (x_ex_fwd[i]) begin
-                x_issue_req_o.rs[i] = result_fw_to_x_i;
-              end else if (x_wb_fwd[i]) begin
-                x_issue_req_o.rs[i] = regfile_wdata_wb_i;
-              end
+            if (x_ex_fwd[i]) begin
+              x_issue_req_o.rs[i + 3 * j] = result_fw_to_x_i;
+            end else if (x_wb_fwd[i]) begin
+              x_issue_req_o.rs[i + 3 * j] = regfile_wdata_wb_i;
             end
           end
         end

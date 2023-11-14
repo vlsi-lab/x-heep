@@ -9,6 +9,6 @@
   upstream:
   {
     url: https://github.com/vlsi-lab/cv32e40px.git
-    rev: a643c2c1840ae3408bbec3914d5e9d89040284e9
+    rev: 704ed147642c21e0cc64e7d2db21d93ba4b7a89f
   }
 }
