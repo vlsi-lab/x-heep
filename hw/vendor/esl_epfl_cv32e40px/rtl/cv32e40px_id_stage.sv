@@ -383,9 +383,9 @@ module cv32e40px_id_stage
   logic [ 5:0] regfile_alu_waddr_id;
   logic regfile_alu_we_id, regfile_alu_we_dec_id;
 
-  logic [REGFILE_NUM_READ_PORTS:0][31:0] regfile_data_ra_id;
-  logic [REGFILE_NUM_READ_PORTS:0][31:0] regfile_data_rb_id;
-  logic [REGFILE_NUM_READ_PORTS:0][31:0] regfile_data_rc_id;
+  logic [REGFILE_NUM_READ_PORTS-1:0][31:0] regfile_data_ra_id;
+  logic [REGFILE_NUM_READ_PORTS-1:0][31:0] regfile_data_rb_id;
+  logic [REGFILE_NUM_READ_PORTS-1:0][31:0] regfile_data_rc_id;
 
   // ALU Control
   logic alu_en;
