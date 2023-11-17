@@ -51,7 +51,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
   parameter int unsigned                X_ID_WIDTH                              = 4,
   parameter int unsigned                X_MEM_WIDTH                             = 32,
   parameter int unsigned                X_RFR_WIDTH                             = 32,
-  parameter int unsigned                X_RFW_WIDTH                             = 32,
+  parameter int unsigned                X_RFW_WIDTH                             = 64,
   parameter logic [31:0]                X_MISA                                  = 32'h00000000,
   parameter logic [1:0]                 X_ECS_XS                                = 2'b00,
   parameter int unsigned                NUM_MHPMCOUNTERS                        = 1
@@ -189,9 +189,9 @@ module cv32e40x_core import cv32e40x_pkg::*;
   logic        debug_req_gated;
 
   // Register File Write Back
-  logic        rf_we_wb;
-  rf_addr_t    rf_waddr_wb;
-  logic [31:0] rf_wdata_wb;
+  logic     [1:0]  rf_we_wb;
+  rf_addr_t [1:0]  rf_waddr_wb;
+  logic     [63:0] rf_wdata_wb;
 
   // Forwarding RF from EX
   logic [31:0] rf_wdata_ex;
@@ -357,6 +357,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
   // eXtension interface signals
   logic        xif_offloading_id;
   logic        xif_dualread;
+  logic        xif_dualwrite;
 
   logic        unused_signals;
 
@@ -586,7 +587,8 @@ module cv32e40x_core import cv32e40x_pkg::*;
     // eXtension interface
     .xif_issue_if                 ( xif_issue_if              ),
     .xif_offloading_o             ( xif_offloading_id         ),
-    .xif_dualread_o               ( xif_dualread              )
+    .xif_dualread_o               ( xif_dualread              ),
+    .xif_dualwrite_o              ( xif_dualwrite              )
   );
 
   /////////////////////////////////////////////////////
@@ -1126,9 +1128,12 @@ module cv32e40x_core import cv32e40x_pkg::*;
   /////////////////////////////////////////////////////////
 
   // Connect register file write port(s) to regfile inputs
-  assign rf_we[0]    = rf_we_wb;
-  assign rf_waddr[0] = rf_waddr_wb;
-  assign rf_wdata[0] = rf_wdata_wb;
+  assign rf_we[0]    = rf_we_wb[0];
+  assign rf_we[1]    = rf_we_wb[1];
+  assign rf_waddr[0] = rf_waddr_wb[0];
+  assign rf_waddr[1] = rf_waddr_wb[1];
+  assign rf_wdata[0] = rf_wdata_wb[31:0];
+  assign rf_wdata[1] = rf_wdata_wb[63:32];
 
   cv32e40x_register_file_wrapper
   #(
@@ -1146,6 +1151,7 @@ module cv32e40x_core import cv32e40x_pkg::*;
     .rdata_o            ( rf_rdata_id  ),
 
     // Write ports
+    .dualwrite_i        ( ex_wb_pipe.xif_meta.dualwrite ),
     .waddr_i            ( rf_waddr    ),
     .wdata_i            ( rf_wdata    ),
     .we_i               ( rf_we       )

@@ -29,6 +29,7 @@
 module cv32e40x_register_file import cv32e40x_pkg::*;
   #(
       parameter int unsigned REGFILE_NUM_READ_PORTS = 2,
+      parameter int unsigned REGFILE_NUM_WRITE_PORTS = 2,
       parameter rv32_e       RV32                   = RV32I
   )
   (

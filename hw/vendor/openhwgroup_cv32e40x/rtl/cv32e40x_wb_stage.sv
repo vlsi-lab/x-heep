@@ -55,9 +55,9 @@ module cv32e40x_wb_stage import cv32e40x_pkg::*;
   input  align_status_e lsu_align_status_i,
 
   // Register file interface
-  output logic          rf_we_wb_o,     // Register file write enable
-  output rf_addr_t      rf_waddr_wb_o,  // Register file write address
-  output logic [31:0]   rf_wdata_wb_o,  // Register file write data
+  output logic [1:0]    rf_we_wb_o,     // Register file write enable
+  output rf_addr_t [1:0]     rf_waddr_wb_o,  // Register file write address
+  output logic [63:0]   rf_wdata_wb_o,  // Register file write data
 
   // LSU handshake interface
   input  logic          lsu_valid_i,
@@ -130,9 +130,11 @@ module cv32e40x_wb_stage import cv32e40x_pkg::*;
   // rf_we_wb_o is deasserted if lsu_mpu_status is not equal to MPU_OK
 
   // TODO:XIF Could use result interface.we into account if out of order completion is allowed.
-  assign rf_we_wb_o     = ex_wb_pipe_i.rf_we && !lsu_exception && !xif_waiting && !xif_exception && !(|lsu_wpt_match) && instr_valid;
+  assign rf_we_wb_o[0]     = ex_wb_pipe_i.rf_we && !lsu_exception && !xif_waiting && !xif_exception && !(|lsu_wpt_match) && instr_valid;
+  assign rf_we_wb_o[1]     = ex_wb_pipe_i.rf_we && !lsu_exception && !xif_waiting && !xif_exception && !(|lsu_wpt_match) && instr_valid;
   // TODO:XIF Could use result interface.rd into account if out of order completion is allowed.
-  assign rf_waddr_wb_o  = ex_wb_pipe_i.rf_waddr;
+  assign rf_waddr_wb_o[0]  = ex_wb_pipe_i.rf_waddr;
+  assign rf_waddr_wb_o[1]  = ex_wb_pipe_i.rf_waddr ^ 1'b1;
   // TODO:XIF Could use result interface.rd into account if out of order completion is allowed.
   // Not using any flopped/sticky version of lsu_rdata_i. The sticky bits are only needed for MPU errors and watchpoint triggers.
   // Any true load that succeeds will write the RF and will never be halted or killed by the controller. (wb_valid during the same cycle as lsu_valid_i).

@@ -98,7 +98,8 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
   // eXtension interface
   cv32e40x_if_xif.cpu_issue xif_issue_if,
   output logic              xif_offloading_o,
-  output logic              xif_dualread_o
+  output logic              xif_dualread_o,
+  output logic              xif_dualwrite_o
 );
 
   // Source/Destination register instruction index
@@ -724,6 +725,7 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       // a new instruction ID from the IF stage
       assign xif_offloading_o             = xif_issue_if.issue_valid || xif_accepted_q || xif_rejected_q;
       assign xif_dualread_o = xif_dualread;
+      assign xif_dualwrite_o = xif_dualwrite;
 
       assign xif_issue_if.issue_req.instr = instr;
       assign xif_issue_if.issue_req.mode  = PRIV_LVL_M;
@@ -776,8 +778,9 @@ module cv32e40x_id_stage import cv32e40x_pkg::*;
       assign xif_we                           = 1'b0;
       assign xif_exception                    = 1'b0;
       assign xif_dualwrite                    = 1'b0;
+      assign xif_dualwrite_o                  = 1'b0;
       assign xif_dualread                     = 1'b0;
-      assign xif_dualread_o                     = 1'b0;
+      assign xif_dualread_o                   = 1'b0;
       assign xif_loadstore                    = 1'b0;
 
       assign xif_issue_if.issue_valid         = 1'b0;
