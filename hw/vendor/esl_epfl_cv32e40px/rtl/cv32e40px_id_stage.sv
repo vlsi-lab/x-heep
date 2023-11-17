@@ -440,8 +440,8 @@ module cv32e40px_id_stage
   logic [2:0][4:0] x_rs_addr;
   logic x_mem_data_req;
   logic x_mem_valid;
-  logic [2:0] x_ex_fwd;
-  logic [2:0] x_wb_fwd;
+  logic [RF_READ_PORTS-1:0] x_ex_fwd;
+  logic [RF_READ_PORTS-1:0] x_wb_fwd;
 
   // Register Write Control
   logic regfile_we_id;
@@ -1101,6 +1101,7 @@ module cv32e40px_id_stage
           .x_issue_valid_o         (x_issue_valid_o),
           .x_issue_ready_i         (x_issue_ready_i),
           .x_issue_resp_writeback_i(x_issue_resp_i.writeback),
+          .x_issue_resp_dualread_i (x_issue_resp_i.dualread),
           .x_issue_resp_accept_i   (x_issue_resp_i.accept),
           .x_issue_resp_loadstore_i(x_issue_resp_i.loadstore),
           .x_issue_req_rs_valid_o  (x_issue_req_o.rs_valid),
@@ -1192,14 +1193,15 @@ module cv32e40px_id_stage
             end else begin
               x_issue_req_o.rs[i+3*j] = regfile_data_rc_id[j];
             end
-            if (x_ex_fwd[i]) begin
+            if (x_ex_fwd[i+3*j]) begin
               x_issue_req_o.rs[i+3*j] = result_fw_to_x_i;
-            end else if (x_wb_fwd[i]) begin
+            end else if (x_wb_fwd[i+3*j]) begin
               x_issue_req_o.rs[i+3*j] = regfile_wdata_wb_i;
             end
           end
         end
       end
+
       // LSU signal assignment/MUX
       always_comb begin
         x_mem_data_type_id = 2'b00;
