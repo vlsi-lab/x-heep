@@ -625,7 +625,7 @@ module cv32e40px_id_stage
   //                       |_|                    |___/           //
   //////////////////////////////////////////////////////////////////
   generate
-    if (COREV_X_IF == 0) begin : no_xif_jump_target_mux
+    if (X_DUALREAD == 0) begin : no_dualread_jump_target_mux
       always_comb begin : jump_target_mux
         unique case (ctrl_transfer_target_mux_sel)
           JT_JAL:  jump_target = pc_id_i + imm_uj_type;
@@ -636,7 +636,7 @@ module cv32e40px_id_stage
           default: jump_target = regfile_data_ra_id + imm_i_type;
         endcase
       end
-    end else begin : xif_jump_target_mux
+    end else begin : dualread_jump_target_mux
       always_comb begin : jump_target_mux
         unique case (ctrl_transfer_target_mux_sel)
           JT_JAL:  jump_target = pc_id_i + imm_uj_type;
@@ -683,7 +683,7 @@ module cv32e40px_id_stage
   end
 
   generate
-    if (COREV_X_IF == 0) begin : no_xif_fw_a
+    if (X_DUALREAD == 0) begin : no_dualread_fw_a
       // Operand a forwarding mux
       always_comb begin : operand_a_fw_mux
         case (operand_a_fw_mux_sel)
@@ -694,7 +694,7 @@ module cv32e40px_id_stage
         endcase
         ;  // case (operand_a_fw_mux_sel)
       end
-    end else begin : xif_fw_a
+    end else begin : dualread_fw_a
       // Operand a forwarding mux
       always_comb begin : operand_a_fw_mux
         case (operand_a_fw_mux_sel)
@@ -764,7 +764,7 @@ module cv32e40px_id_stage
 
 
   generate
-    if (COREV_X_IF == 0) begin : no_xif_fw_b
+    if (X_DUALREAD == 0) begin : no_dualread_fw_b
       // Operand b forwarding mux
       always_comb begin : operand_b_fw_mux
         case (operand_b_fw_mux_sel)
@@ -775,7 +775,7 @@ module cv32e40px_id_stage
         endcase
         ;  // case (operand_b_fw_mux_sel)
       end
-    end else begin : xif_fw_b
+    end else begin : dualread_fw_b
       // Operand b forwarding mux
       always_comb begin : operand_b_fw_mux
         case (operand_b_fw_mux_sel)
@@ -824,7 +824,7 @@ module cv32e40px_id_stage
 
 
   generate
-    if (COREV_X_IF == 0) begin : no_xif_fw_c
+    if (X_DUALREAD == 0) begin : no_dualread_fw_c
       // Operand c forwarding mux
       always_comb begin : operand_c_fw_mux
         case (operand_c_fw_mux_sel)
@@ -835,7 +835,7 @@ module cv32e40px_id_stage
         endcase
         ;  // case (operand_c_fw_mux_sel)
       end
-    end else begin : xif_fw_c
+    end else begin : dualread_fw_c
       // Operand c forwarding mux
       always_comb begin : operand_c_fw_mux
         case (operand_c_fw_mux_sel)
