@@ -33,7 +33,8 @@ module cv32e40px_x_disp
     input  logic                     x_issue_ready_i,
     input  logic                     x_issue_resp_accept_i,
     input  logic                     x_issue_resp_writeback_i,
-    input  logic                     x_issue_resp_dualread_i,
+
+    input  logic [              2:0] x_issue_resp_dualread_i,
     input  logic                     x_issue_resp_loadstore_i,  // unused
     output logic [RF_READ_PORTS-1:0] x_issue_req_rs_valid_o,
     output logic [              3:0] x_issue_req_id_o,
@@ -119,11 +120,11 @@ module cv32e40px_x_disp
       assign x_issue_req_rs_valid_o[2] = (~scoreboard_q[x_rs_addr_i[2]] | x_ex_fwd_o[2] | x_wb_fwd_o[2])
                                          & ~(x_rs_addr_i[2] == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[2] == waddr_wb_i & ~ex_valid_i);
       assign x_issue_req_rs_valid_o[3] = (~scoreboard_q[x_rs_addr_i[0] | 5'b00001] | x_ex_fwd_o[3] | x_wb_fwd_o[3])
-                                         & ~(x_rs_addr_i[0] | 5'b00001 == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[0] | 5'b00001 == waddr_wb_i & ~ex_valid_i);
+                                         & ~((x_rs_addr_i[0] | 5'b00001) == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~((x_rs_addr_i[0] | 5'b00001) == waddr_wb_i & ~ex_valid_i);
       assign x_issue_req_rs_valid_o[4] = (~scoreboard_q[x_rs_addr_i[1] | 5'b00001] | x_ex_fwd_o[4] | x_wb_fwd_o[4])
-                                         & ~(x_rs_addr_i[1] | 5'b00001 == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[1] | 5'b00001 == waddr_wb_i & ~ex_valid_i);
+                                         & ~((x_rs_addr_i[1] | 5'b00001) == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~((x_rs_addr_i[1] | 5'b00001) == waddr_wb_i & ~ex_valid_i);
       assign x_issue_req_rs_valid_o[5] = (~scoreboard_q[x_rs_addr_i[2] | 5'b00001] | x_ex_fwd_o[5] | x_wb_fwd_o[5])
-                                         & ~(x_rs_addr_i[2] | 5'b00001 == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~(x_rs_addr_i[2] | 5'b00001 == waddr_wb_i & ~ex_valid_i);
+                                         & ~((x_rs_addr_i[2] | 5'b00001) == mem_instr_waddr_ex_i & mem_instr_we_ex_i) & ~((x_rs_addr_i[2] | 5'b00001) == waddr_wb_i & ~ex_valid_i);
       assign x_issue_req_ecs_valid = 1'b1;  // extension context status is not implemented in cv32e40px
     end else begin
       assign x_issue_req_rs_valid_o[0] = (~scoreboard_q[x_rs_addr_i[0]] | x_ex_fwd_o[0] | x_wb_fwd_o[0])
@@ -171,21 +172,21 @@ module cv32e40px_x_disp
       assign x_ex_fwd_o[0] = x_rs_addr_i[0] == waddr_ex_i & we_ex_i & ex_valid_i;
       assign x_ex_fwd_o[1] = x_rs_addr_i[1] == waddr_ex_i & we_ex_i & ex_valid_i;
       assign x_ex_fwd_o[2] = x_rs_addr_i[2] == waddr_ex_i & we_ex_i & ex_valid_i;
-      assign x_ex_fwd_o[3] = (x_rs_addr_i[0] | 5'b00001) == waddr_ex_i & we_ex_i & ex_valid_i & x_issue_resp_dualread_i;
-      assign x_ex_fwd_o[4] = (x_rs_addr_i[1] | 5'b00001) == waddr_ex_i & we_ex_i & ex_valid_i & x_issue_resp_dualread_i;
-      assign x_ex_fwd_o[5] = (x_rs_addr_i[2] | 5'b00001) == waddr_ex_i & we_ex_i & ex_valid_i & x_issue_resp_dualread_i;
+      assign x_ex_fwd_o[3] = (x_rs_addr_i[0] | 5'b00001) == waddr_ex_i & we_ex_i & ex_valid_i & x_issue_resp_dualread_i[0];
+      assign x_ex_fwd_o[4] = (x_rs_addr_i[1] | 5'b00001) == waddr_ex_i & we_ex_i & ex_valid_i & x_issue_resp_dualread_i[1];
+      assign x_ex_fwd_o[5] = (x_rs_addr_i[2] | 5'b00001) == waddr_ex_i & we_ex_i & ex_valid_i & x_issue_resp_dualread_i[2];
       assign x_wb_fwd_o[0] = x_rs_addr_i[0] == waddr_wb_i & we_wb_i & ex_valid_i;
       assign x_wb_fwd_o[1] = x_rs_addr_i[1] == waddr_wb_i & we_wb_i & ex_valid_i;
       assign x_wb_fwd_o[2] = x_rs_addr_i[2] == waddr_wb_i & we_wb_i & ex_valid_i;
-      assign x_wb_fwd_o[3] = (x_rs_addr_i[0] | 5'b00001) == waddr_wb_i & we_wb_i & ex_valid_i & x_issue_resp_dualread_i;
-      assign x_wb_fwd_o[4] = (x_rs_addr_i[1] | 5'b00001) == waddr_wb_i & we_wb_i & ex_valid_i & x_issue_resp_dualread_i;
-      assign x_wb_fwd_o[5] = (x_rs_addr_i[2] | 5'b00001) == waddr_wb_i & we_wb_i & ex_valid_i & x_issue_resp_dualread_i;
+      assign x_wb_fwd_o[3] = (x_rs_addr_i[0] | 5'b00001) == waddr_wb_i & we_wb_i & ex_valid_i & x_issue_resp_dualread_i[0];
+      assign x_wb_fwd_o[4] = (x_rs_addr_i[1] | 5'b00001) == waddr_wb_i & we_wb_i & ex_valid_i & x_issue_resp_dualread_i[1];
+      assign x_wb_fwd_o[5] = (x_rs_addr_i[2] | 5'b00001) == waddr_wb_i & we_wb_i & ex_valid_i & x_issue_resp_dualread_i[2];
       assign dep = ~x_illegal_insn_o & ((regs_used_i[0] & scoreboard_q[x_rs_addr_i[0]] & (x_result_rd_i != x_rs_addr_i[0]))
                                   |     (regs_used_i[1] & scoreboard_q[x_rs_addr_i[1]] & (x_result_rd_i != x_rs_addr_i[1]))
                                   |     (regs_used_i[2] & scoreboard_q[x_rs_addr_i[2]] & (x_result_rd_i != x_rs_addr_i[2]))
-                                  |     (((regs_used_i[0] & x_issue_resp_dualread_i) & scoreboard_q[x_rs_addr_i[0] | 5'b00001] & (x_result_rd_i != (x_rs_addr_i[0] | 5'b00001))) & x_issue_resp_dualread_i)
-                                  |     (((regs_used_i[1] & x_issue_resp_dualread_i) & scoreboard_q[x_rs_addr_i[1] | 5'b00001] & (x_result_rd_i != (x_rs_addr_i[1] | 5'b00001))) & x_issue_resp_dualread_i)
-                                  |     (((regs_used_i[2] & x_issue_resp_dualread_i) & scoreboard_q[x_rs_addr_i[2] | 5'b00001] & (x_result_rd_i != (x_rs_addr_i[2] | 5'b00001))) & x_issue_resp_dualread_i));
+                                  |     (((regs_used_i[0] & x_issue_resp_dualread_i[0]) & scoreboard_q[x_rs_addr_i[0] | 5'b00001] & (x_result_rd_i != (x_rs_addr_i[0] | 5'b00001))) & x_issue_resp_dualread_i[0])
+                                  |     (((regs_used_i[1] & x_issue_resp_dualread_i[1]) & scoreboard_q[x_rs_addr_i[1] | 5'b00001] & (x_result_rd_i != (x_rs_addr_i[1] | 5'b00001))) & x_issue_resp_dualread_i[1])
+                                  |     (((regs_used_i[2] & x_issue_resp_dualread_i[2]) & scoreboard_q[x_rs_addr_i[2] | 5'b00001] & (x_result_rd_i != (x_rs_addr_i[2] | 5'b00001))) & x_issue_resp_dualread_i[2]));
     end else begin
       assign x_ex_fwd_o[0] = x_rs_addr_i[0] == waddr_ex_i & we_ex_i & ex_valid_i;
       assign x_ex_fwd_o[1] = x_rs_addr_i[1] == waddr_ex_i & we_ex_i & ex_valid_i;

@@ -302,7 +302,8 @@ module cv32e40px_id_stage
   localparam REG_D_MSB = 11;
   localparam REG_D_LSB = 7;
 
-  localparam REGFILE_NUM_READ_PORTS = (COREV_X_IF & X_DUALREAD) ? 2 : 1;
+
+  localparam REGFILE_NUM_READ_PORTS = ((COREV_X_IF == 1) & (X_DUALREAD == 1)) ? 2 : 1;
 
   logic [31:0] instr;
 
