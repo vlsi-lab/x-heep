@@ -265,9 +265,9 @@ module cv32e40px_id_stage
     input logic regfile_we_wb_i,
     input  logic [31:0] regfile_wdata_wb_i, // From wb_stage: selects data from data memory, ex_stage result and sp rdata
 
-    input logic [ 5:0] regfile_alu_waddr_fw_i,
-    input logic        regfile_alu_we_fw_i,
-    input logic [31:0] regfile_alu_wdata_fw_i,
+    input logic [ 6 * (1 + X_DUALREAD) - 1:0] regfile_alu_waddr_fw_i,
+    input logic       regfile_alu_we_fw_i,
+    input logic [32 * (1 + X_DUALREAD) - 1:0] regfile_alu_wdata_fw_i,
 
     // from ALU
     input  logic        mult_multicycle_i,    // when we need multiple cycles in the multiplier and use op c as storage
@@ -602,9 +602,9 @@ module cv32e40px_id_stage
   assign reg_d_wb_is_reg_a_id  = (regfile_waddr_wb_i     == regfile_addr_ra_id) && (rega_used == 1'b1) && (regfile_addr_ra_id != '0);
   assign reg_d_wb_is_reg_b_id  = (regfile_waddr_wb_i     == regfile_addr_rb_id) && (regb_used == 1'b1) && (regfile_addr_rb_id != '0);
   assign reg_d_wb_is_reg_c_id  = (regfile_waddr_wb_i     == regfile_addr_rc_id) && (regc_used == 1'b1) && (regfile_addr_rc_id != '0);
-  assign reg_d_alu_is_reg_a_id = (regfile_alu_waddr_fw_i == regfile_addr_ra_id) && (rega_used == 1'b1) && (regfile_addr_ra_id != '0);
-  assign reg_d_alu_is_reg_b_id = (regfile_alu_waddr_fw_i == regfile_addr_rb_id) && (regb_used == 1'b1) && (regfile_addr_rb_id != '0);
-  assign reg_d_alu_is_reg_c_id = (regfile_alu_waddr_fw_i == regfile_addr_rc_id) && (regc_used == 1'b1) && (regfile_addr_rc_id != '0);
+  assign reg_d_alu_is_reg_a_id = (regfile_alu_waddr_fw_i[5:0] == regfile_addr_ra_id) && (rega_used == 1'b1) && (regfile_addr_ra_id != '0);
+  assign reg_d_alu_is_reg_b_id = (regfile_alu_waddr_fw_i[5:0] == regfile_addr_rb_id) && (regb_used == 1'b1) && (regfile_addr_rb_id != '0);
+  assign reg_d_alu_is_reg_c_id = (regfile_alu_waddr_fw_i[5:0] == regfile_addr_rc_id) && (regc_used == 1'b1) && (regfile_addr_rc_id != '0);
 
 
   // kill instruction in the IF/ID stage by setting the instr_valid_id control
@@ -699,7 +699,7 @@ module cv32e40px_id_stage
       // Operand a forwarding mux
       always_comb begin : operand_a_fw_mux
         case (operand_a_fw_mux_sel)
-          SEL_FW_EX:   operand_a_fw_id = regfile_alu_wdata_fw_i;
+          SEL_FW_EX:   operand_a_fw_id = regfile_alu_wdata_fw_i[31:0];
           SEL_FW_WB:   operand_a_fw_id = regfile_wdata_wb_i;
           SEL_REGFILE: operand_a_fw_id = regfile_data_ra_id[0];
           default:     operand_a_fw_id = regfile_data_ra_id[0];
@@ -780,7 +780,7 @@ module cv32e40px_id_stage
       // Operand b forwarding mux
       always_comb begin : operand_b_fw_mux
         case (operand_b_fw_mux_sel)
-          SEL_FW_EX:   operand_b_fw_id = regfile_alu_wdata_fw_i;
+          SEL_FW_EX:   operand_b_fw_id = regfile_alu_wdata_fw_i[31:0];
           SEL_FW_WB:   operand_b_fw_id = regfile_wdata_wb_i;
           SEL_REGFILE: operand_b_fw_id = regfile_data_rb_id[0];
           default:     operand_b_fw_id = regfile_data_rb_id[0];
@@ -840,7 +840,7 @@ module cv32e40px_id_stage
       // Operand c forwarding mux
       always_comb begin : operand_c_fw_mux
         case (operand_c_fw_mux_sel)
-          SEL_FW_EX:   operand_c_fw_id = regfile_alu_wdata_fw_i;
+          SEL_FW_EX:   operand_c_fw_id = regfile_alu_wdata_fw_i[31:0];
           SEL_FW_WB:   operand_c_fw_id = regfile_wdata_wb_i;
           SEL_REGFILE: operand_c_fw_id = regfile_data_rc_id[0];
           default:     operand_c_fw_id = regfile_data_rc_id[0];
@@ -1074,7 +1074,7 @@ module cv32e40px_id_stage
       // Write port b
       .waddr_b_i(regfile_alu_waddr_fw_i),
       .wdata_b_i(regfile_alu_wdata_fw_i),
-      .we_b_i   (regfile_alu_we_fw_i)
+      .we_b_i   ({x_result_i.we[1], regfile_alu_we_fw_i})
   );
 
   logic [1:0] x_mem_data_type_id;
@@ -1103,6 +1103,7 @@ module cv32e40px_id_stage
           .x_issue_ready_i         (x_issue_ready_i),
           .x_issue_resp_writeback_i(x_issue_resp_i.writeback),
           .x_issue_resp_dualread_i (x_issue_resp_i.dualread),
+          .x_issue_resp_dualwrite_i(x_issue_resp_i.dualwrite),
           .x_issue_resp_accept_i   (x_issue_resp_i.accept),
           .x_issue_resp_loadstore_i(x_issue_resp_i.loadstore),
           .x_issue_req_rs_valid_o  (x_issue_req_o.rs_valid),

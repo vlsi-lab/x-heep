@@ -277,9 +277,9 @@ module cv32e40px_core
   logic        [                 5:0]       regfile_alu_waddr_ex;
   logic                                     regfile_alu_we_ex;
 
-  logic        [                 5:0]       regfile_alu_waddr_fw;
+  logic        [ 6 * (1 + X_DUALREAD) - 1:0]       regfile_alu_waddr_fw;
   logic                                     regfile_alu_we_fw;
-  logic        [                31:0]       regfile_alu_wdata_fw;
+  logic        [32 * (1 + X_DUALREAD) - 1:0]       regfile_alu_wdata_fw;
 
   // CSR control
   logic                                     csr_access_ex;

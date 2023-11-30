@@ -61,9 +61,9 @@ module cv32e40px_register_file #(
     input logic                  we_a_i,
 
     // Write port W2
-    input logic [ADDR_WIDTH-1:0] waddr_b_i,
-    input logic [DATA_WIDTH-1:0] wdata_b_i,
-    input logic                  we_b_i
+    input logic [ADDR_WIDTH * (1 + cv32e40px_core_v_xif_pkg::X_DUALWRITE) - 1:0] waddr_b_i,
+    input logic [DATA_WIDTH * (1 + cv32e40px_core_v_xif_pkg::X_DUALWRITE) - 1:0] wdata_b_i,
+    input logic [cv32e40px_core_v_xif_pkg::X_DUALWRITE:0]    we_b_i
 );
 
   // number of integer registers
@@ -80,7 +80,7 @@ module cv32e40px_register_file #(
 
   // masked write addresses
   logic [   ADDR_WIDTH-1:0]                 waddr_a;
-  logic [   ADDR_WIDTH-1:0]                 waddr_b;
+  logic [   ADDR_WIDTH * (1 + cv32e40px_core_v_xif_pkg::X_DUALWRITE) - 1:0]                 waddr_b;
 
   // write enable signals for all registers
   logic [NUM_TOT_WORDS-1:0]                 we_a_dec;
@@ -125,9 +125,16 @@ module cv32e40px_register_file #(
 
   genvar gidx;
   generate
-    for (gidx = 0; gidx < NUM_TOT_WORDS; gidx++) begin : gen_we_decoder
-      assign we_a_dec[gidx] = (waddr_a == gidx) ? we_a_i : 1'b0;
-      assign we_b_dec[gidx] = (waddr_b == gidx) ? we_b_i : 1'b0;
+    if (cv32e40px_core_v_xif_pkg::X_DUALWRITE == 0) begin
+      for (gidx = 0; gidx < NUM_TOT_WORDS; gidx++) begin : gen_we_decoder
+        assign we_a_dec[gidx] = (waddr_a == gidx) ? we_a_i : 1'b0;
+        assign we_b_dec[gidx] = (waddr_b == gidx) ? we_b_i : 1'b0;
+      end
+    end else begin
+      for (gidx = 0; gidx < NUM_TOT_WORDS; gidx++) begin : gen_we_decoder
+        assign we_a_dec[gidx] = (waddr_a == gidx) ? we_a_i : 1'b0;
+        assign we_b_dec[gidx] = (waddr_b[5:0] == gidx) ? we_b_i[0] : 1'b0;
+      end
     end
   endgenerate
 
@@ -155,7 +162,10 @@ module cv32e40px_register_file #(
         if (rst_n == 1'b0) begin
           mem[i] <= 32'b0;
         end else begin
-          if (we_b_dec[i] == 1'b1) mem[i] <= wdata_b_i;
+          if (we_b_dec[i] == 1'b1) begin
+            mem[i] <= wdata_b_i[31:0];
+            if (we_b_i[1] == 1'b1) mem[i + 1] <= wdata_b_i[63:32]; 
+          end
           else if (we_a_dec[i] == 1'b1) mem[i] <= wdata_a_i;
         end
       end

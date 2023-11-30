@@ -16,16 +16,16 @@ package cv32e40px_core_v_xif_pkg;
   // cv-x-if parameters
   parameter int X_NUM_RS = 3;
   parameter int X_DUALREAD = 1;
+  parameter int X_DUALWRITE = 1;
   parameter int X_ID_WIDTH = 4;
   parameter int X_MEM_WIDTH = 32;
   parameter int X_RFR_WIDTH = 32;
-  parameter int X_RFW_WIDTH = 32;
+  parameter int X_RFW_WIDTH = 32 * (1 + X_DUALWRITE);
   parameter logic [31:0] X_MISA = '0;
   parameter logic [1:0] X_ECS_XS = '0;
 
   localparam int XLEN = 32;
   localparam int RF_READ_PORTS = (X_DUALREAD == 1) ? 2 * X_NUM_RS : X_NUM_RS;
-
 
   typedef struct packed {
     logic [15:0] instr;  // Offloaded compressed instruction
