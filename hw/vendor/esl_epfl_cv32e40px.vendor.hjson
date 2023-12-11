@@ -7,7 +7,7 @@
 
   upstream: {
     url: "https://github.com/vlsi-lab/cv32e40px.git",
-    rev: "feature/dualwrite",
+    rev: "feature/dualread",
   },
 
 
