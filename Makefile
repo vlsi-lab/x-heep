@@ -34,7 +34,7 @@ PROJECT  ?= hello_world
 # Linker options are 'on_chip' (default),'flash_load','flash_exec','freertos'
 LINKER   ?= on_chip
 
-# Target options are 'sim' (default) and 'pynq-z2'
+# Target options are 'sim' (default) and 'pynq-z2' and 'nexys-a7-100t'
 TARGET   	?= sim
 MCU_CFG  	?= mcu_cfg.hjson
 PAD_CFG  	?= pad_cfg.hjson
@@ -67,13 +67,6 @@ conda: environment.yml
 
 environment.yml: python-requirements.txt
 	util/python-requirements2conda.sh
-
-## @section Linux-Emulation
-
-## Generates FEMU
-linux-femu-gen: mcu-gen
-	$(PYTHON) util/mcu_gen.py --cfg $(MCU_CFG) --pads_cfg $(PAD_CFG) --outdir linux_femu/rtl/ --tpl-sv linux_femu/rtl/linux_femu.sv.tpl
-	$(MAKE) verible
 
 ## @section Installation
 
@@ -119,7 +112,7 @@ verible:
 
 ## Generates the build folder in sw using CMake to build (compile and linking)
 ## @param PROJECT=<folder_name_of_the_project_to_be_built>
-## @param TARGET=sim(default),pynq-z2
+## @param TARGET=sim(default),pynq-z2,nexys-a7-100t
 ## @param LINKER=on_chip(default),flash_load,flash_exec
 ## @param COMPILER=gcc(default), clang
 ## @param COMPILER_PREFIX=riscv32-unknown-(default)
@@ -208,6 +201,9 @@ vivado-fpga:
 vivado-fpga-nobuild:
 	$(FUSESOC) --cores-root . run --no-export --target=$(FPGA_BOARD) $(FUSESOC_FLAGS) --setup openhwgroup.org:systems:core-v-mini-mcu ${FUSESOC_PARAM} 2>&1 | tee buildvivado.log
 
+vivado-fpga-pgm:
+	$(MAKE) -C build/openhwgroup.org_systems_core-v-mini-mcu_0/$(FPGA_BOARD)-vivado pgm
+
 ## @section ASIC
 ## Note that for this step you need to provide technology-dependent files (e.g., libs, constraints)
 asic:
@@ -224,12 +220,12 @@ openroad-sky130:
 
 ## Read the id from the EPFL_Programmer flash
 flash-readid:
-	cd sw/vendor/yosyshq_icestorm/iceprog; \
+	cd sw/vendor/yosyshq_icestorm/iceprog; make; \
 	./iceprog -d i:0x0403:0x6011 -I B -t;
 
 ## Loads the obtained binary to the EPFL_Programmer flash
 flash-prog:
-	cd sw/vendor/yosyshq_icestorm/iceprog; \
+	cd sw/vendor/yosyshq_icestorm/iceprog; make; \
 	./iceprog -d i:0x0403:0x6011 -I B $(mkfile_path)/sw/build/main.hex;
 
 ## Run openOCD w/ EPFL_Programmer
