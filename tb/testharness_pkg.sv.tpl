@@ -9,10 +9,16 @@ package testharness_pkg;
   import addr_map_rule_pkg::*;
   import core_v_mini_mcu_pkg::*;
 
-  % if user_peripheral_domain.contains_peripheral('serial_link'):
+  %if user_peripheral_domain.contains_peripheral('serial_link') and (not user_peripheral_domain.contains_peripheral('uart')):
+    localparam EXT_XBAR_NMASTER = 8;
+    localparam EXT_XBAR_NSLAVE = 4;
+  %elif user_peripheral_domain.contains_peripheral('serial_link'):
     localparam EXT_XBAR_NMASTER = 8;
     localparam EXT_XBAR_NSLAVE = 3;
-  % else: 
+  %elif (not user_peripheral_domain.contains_peripheral('uart')):
+    localparam EXT_XBAR_NMASTER = 8;
+    localparam EXT_XBAR_NSLAVE = 3;
+  % else:
     localparam EXT_XBAR_NMASTER = 8;
     localparam EXT_XBAR_NSLAVE = 2;
   %endif
@@ -42,6 +48,24 @@ package testharness_pkg;
     localparam logic [31:0] SL_EXT_IDX = 32'd2;
   %endif
 
+  % if not user_peripheral_domain.contains_peripheral('uart'):
+  //slave obi_uart
+  localparam logic [31:0] OBI_UART_EXT_START_ADDRESS =
+  % if user_peripheral_domain.contains_peripheral('serial_link'):
+      SL_EXT_END_ADDRESS;
+  % else:
+      SLOW_MEMORY_END_ADDRESS;
+  % endif
+  localparam logic [31:0] OBI_UART_EXT_SIZE = 32'h100;
+  localparam logic [31:0] OBI_UART_EXT_END_ADDRESS = OBI_UART_EXT_START_ADDRESS + OBI_UART_EXT_SIZE;
+  localparam logic [31:0] OBI_UART_IDX =
+  % if user_peripheral_domain.contains_peripheral('serial_link'):
+      32'd3;
+  % else:
+      32'd2;
+  % endif
+  % endif
+
   localparam addr_map_rule_t [EXT_XBAR_NSLAVE-1:0] EXT_XBAR_ADDR_RULES = '{
       '{
           idx: SLOW_MEMORY0_IDX,
@@ -57,6 +81,10 @@ package testharness_pkg;
       ,
       '{idx: SL_EXT_IDX, start_addr: SL_EXT_START_ADDRESS, end_addr: SL_EXT_END_ADDRESS}
       %endif
+      % if not user_peripheral_domain.contains_peripheral('uart'):
+      ,
+      '{idx: OBI_UART_IDX, start_addr: OBI_UART_EXT_START_ADDRESS, end_addr: OBI_UART_EXT_END_ADDRESS}
+      % endif
   };
 
   //slave encoder

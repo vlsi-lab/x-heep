@@ -99,6 +99,8 @@ module testharness #(
   // UART
   wire uart_rx;
   wire uart_tx;
+  wire obi_uart_rx;
+  wire obi_uart_tx;
   logic sim_jtag_enable = (JTAG_DPI == 1);
 
   // JTAG
@@ -239,6 +241,7 @@ module testharness #(
     intr_vector_ext[0] = memcopy_intr;
     intr_vector_ext[1] = iffifo_int_o;
     intr_vector_ext[2] = im2col_spc_done_int_o;
+    intr_vector_ext[3] = ext_uart_irq;
   end
 
   //log parameters
@@ -445,14 +448,31 @@ module testharness #(
   end
 
   uartdpi #(
-      .BAUD(CLK_FREQUENCY * 1000 / 20),  // close to maximum baud rate (/16)
-      .FREQ(CLK_FREQUENCY * 1000),  //Hz
-      .NAME("uart0")
+  % if user_peripheral_domain.contains_peripheral('uart'):
+    .BAUD(CLK_FREQUENCY * 1000 / 20),
+  % else:
+    // obi_uart's baud-rate divisor register treats a written value of 1 as
+    // invalid (obi_uart_baudgen.sv: internal reload = {DLM,DLL}-1, and 0 is
+    // treated as unconfigured), so 2 is the smallest divisor it actually
+    // runs with -- sw/device/lib/drivers/obi_uart/obi_uart.c clamps to the
+    // same floor. CLK_FREQUENCY*1000/20 (divisor 1, matching the internal
+    // UART's near-instant NCO) is therefore unreachable here; match the
+    // DPI decoder's expected baud to the fastest rate obi_uart can actually
+    // produce (divisor 2) instead, so the two stay in lockstep.
+    .BAUD(CLK_FREQUENCY * 1000 / 32),
+  % endif
+    .FREQ(CLK_FREQUENCY * 1000),
+    .NAME("uart0")
   ) i_uart0 (
       .clk_i,
       .rst_ni,
+  % if user_peripheral_domain.contains_peripheral('uart'):
       .tx_o(uart_rx),
       .rx_i(uart_tx)
+  % else:
+      .tx_o(obi_uart_rx),
+      .rx_i(obi_uart_tx)
+  % endif
   );
 
   // jtag calls from dpi
@@ -862,5 +882,92 @@ module testharness #(
 
     end
   endgenerate
+
+  logic ext_uart_irq;
+
+  % if not user_peripheral_domain.contains_peripheral('uart'):
+  % if xheep.reliability:
+
+        // Request path: a single already-decoded obi_req_t (from the plain,
+        // non-relobi-aware ext_bus crossbar -- see
+        // docs/source/reliable_uart_integration_strategy.md) broadcast to
+        // all three lanes. This does not give upstream bus-fault isolation;
+        // it protects obi_uartTMR's *internal* triplicated register
+        // banks/FIFOs against SEUs, which is why the response below is
+        // actually voted instead of just taking lane A.
+        obi_rsp_t obi_uart_rsp_a, obi_uart_rsp_b, obi_uart_rsp_c;
+        logic uart_gnt_voted, uart_rvalid_voted;
+        logic [31:0] uart_rdata_voted;
+        logic uart_gnt_fault, uart_rvalid_fault, uart_rdata_fault;
+
+        obi_uartTMR #(
+            .ObiCfg(xheep_obi_pkg::xheep_obiCfg),
+            .obi_req_t(obi_req_t), .obi_rsp_t(obi_rsp_t)
+        ) obi_uart_i (
+            .clk_i, .rst_ni,
+            .obi_req_iA(ext_slave_req[testharness_pkg::OBI_UART_IDX]),
+            .obi_req_iB(ext_slave_req[testharness_pkg::OBI_UART_IDX]),
+            .obi_req_iC(ext_slave_req[testharness_pkg::OBI_UART_IDX]),
+            .obi_rsp_oA(obi_uart_rsp_a),
+            .obi_rsp_oB(obi_uart_rsp_b),
+            .obi_rsp_oC(obi_uart_rsp_c),
+            .irq_oA(ext_uart_irq), .irq_oB(), .irq_oC(),
+            .irq_noA(), .irq_noB(), .irq_noC(),
+            .rxd_i(obi_uart_rx), .txd_o(obi_uart_tx),
+            .cts_ni(1'b1), .dsr_ni(1'b1), .ri_ni(1'b1), .cd_ni(1'b1),
+            .rts_no(), .dtr_no(), .out1_no(), .out2_no(),
+            .tmrError(), .tmrErrorA(), .tmrErrorB(), .tmrErrorC()
+        );
+
+        // Response path: vote obi_uartTMR's three genuinely-independent
+        // lanes back down to the single obi_rsp_t ext_bus/core_v_mini_mcu
+        // expect -- this is the only place where the three lanes actually
+        // get compared, instead of blindly trusting lane A.
+        TMR_voter_fail i_uart_gnt_voter (
+            .a_i(obi_uart_rsp_a.gnt), .b_i(obi_uart_rsp_b.gnt), .c_i(obi_uart_rsp_c.gnt),
+            .majority_o(uart_gnt_voted), .fault_detected_o(uart_gnt_fault)
+        );
+        TMR_voter_fail i_uart_rvalid_voter (
+            .a_i(obi_uart_rsp_a.rvalid), .b_i(obi_uart_rsp_b.rvalid), .c_i(obi_uart_rsp_c.rvalid),
+            .majority_o(uart_rvalid_voted), .fault_detected_o(uart_rvalid_fault)
+        );
+        bitwise_TMR_voter_fail #(.DataWidth(32)) i_uart_rdata_voter (
+            .a_i(obi_uart_rsp_a.r.rdata), .b_i(obi_uart_rsp_b.r.rdata), .c_i(obi_uart_rsp_c.r.rdata),
+            .majority_o(uart_rdata_voted), .fault_detected_o(uart_rdata_fault)
+        );
+
+        // obi_uart never drives gntpar/rvalidpar itself (they read back as
+        // '0 from its internal '{default: '0, ...} construction) -- mirror
+        // that same behavior here rather than inventing a new parity
+        // convention, since the non-reliable obi_uart path already proved
+        // this is what ext_bus's crossbar expects.
+        assign ext_slave_resp[testharness_pkg::OBI_UART_IDX] = '{
+            gnt: uart_gnt_voted,
+            rvalid: uart_rvalid_voted,
+            r: '{rdata: uart_rdata_voted, default: '0},
+            default: '0
+        };
+
+  % else:
+  
+        obi_uart #(
+            .ObiCfg(xheep_obi_pkg::xheep_obiCfg),
+            .obi_req_t(obi_req_t), .obi_rsp_t(obi_rsp_t)
+        ) obi_uart_i (
+            .clk_i, .rst_ni,
+            .obi_req_i(ext_slave_req[testharness_pkg::OBI_UART_IDX]),
+            .obi_rsp_o(ext_slave_resp[testharness_pkg::OBI_UART_IDX]),
+            .irq_o(ext_uart_irq), .irq_no(),
+            .rxd_i(obi_uart_rx), .txd_o(obi_uart_tx),
+            .cts_ni(1'b1), .dsr_ni(1'b1), .ri_ni(1'b1), .cd_ni(1'b1),
+            .rts_no(), .dtr_no(), .out1_no(), .out2_no()
+        );
+  % endif
+
+  % else:
+      assign ext_slave_resp[testharness_pkg::OBI_UART_IDX] = '0;
+      assign ext_uart_irq = 1'b0;
+      assign obi_uart_tx = 1'b1;  // idle line
+  % endif
 
 endmodule  // testharness

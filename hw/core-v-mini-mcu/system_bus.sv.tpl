@@ -264,7 +264,13 @@ module system_bus
         for (genvar j = 0; j < 3; j++) begin : gen_addr_decode
             addr_decode #(
                 .NoIndices (2),
-                .NoRules   (2),
+                // DEMUX_XBAR_ADDR_RULES (core_v_mini_mcu_pkg.sv.tpl) only ever
+                // declares one rule (the ext-slave range); "no match" already
+                // falls back to DEMUX_XBAR_INT_SLAVE_IDX via en_default_idx_i
+                // below, so NoRules must be 1, not 2 -- a NoRules/NoIndices
+                // mismatch here silently misrouted every external-bus address
+                // (e.g. obi_uart's) back to the internal crossbar's error slave.
+                .NoRules   (1),
                 .addr_t    (logic [ObiCfg.AddrWidth-1:0]),
                 .rule_t    (addr_map_rule_t)
             ) i_addr_decode (

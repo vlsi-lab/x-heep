@@ -23,6 +23,7 @@ filesets:
     - lint/register_interface.vlt
     - lint/uart.vlt
     - lint/uartdpi.vlt
+    - lint/obi_uart.vlt
     - lint/cluster_interconnect.vlt
     - lint/picorv32.vlt
     - lint/pulpissimo.vlt

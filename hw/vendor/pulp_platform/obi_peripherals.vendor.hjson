@@ -1,0 +1,27 @@
+// Copyright 2020 ETH Zurich and University of Bologna.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+{
+  name: "obi_peripherals",
+  target_dir: "obi_peripherals",
+
+  upstream: {
+    url: "https://github.com/pulp-platform/obi_peripherals.git",
+    rev: "tmrg_mods",
+  },
+
+  exclude_from_upstream: [
+    ".github",
+    ".gitignore",
+    "Bender.lock",
+    "LICENSE",
+    "CHANGELOG.md",
+    "Makefile",
+    "Readme.md",
+    ".gitlab-ci.yml",
+    "Bender.yml",
+  ]
+
+  patch_dir: "../patches/pulp_platform_obi_peripherals",
+
+}

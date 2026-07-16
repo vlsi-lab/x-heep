@@ -130,6 +130,18 @@ extern "C" {
 #define EXT_SLAVE_SIZE 0x${ext_slave_size_address}
 #define EXT_SLAVE_END_ADDRESS (EXT_SLAVE_START_ADDRESS + EXT_SLAVE_SIZE)
 
+// External OBI UART (reliable-UART integration): lives on the testharness's
+// OBI-native ext_bus crossbar (tb/testharness_pkg.sv.tpl), not in the
+// AO/user peripheral address space. Offsets must mirror
+// tb/testharness_pkg.sv.tpl's SLOW_MEMORY_SIZE/SL_EXT_SIZE/OBI_UART_EXT_*.
+% if not user_peripheral_domain.contains_peripheral('uart'):
+#define OBI_UART_EXT_START_ADDRESS (EXT_SLAVE_START_ADDRESS + 0x400${" + 0x200" if user_peripheral_domain.contains_peripheral('serial_link') else ""})
+#define OBI_UART_EXT_SIZE 0x100
+#define OBI_UART_EXT_END_ADDRESS (OBI_UART_EXT_START_ADDRESS + OBI_UART_EXT_SIZE)
+% else:
+#define OBI_UART_EXT_START_ADDRESS 0
+% endif
+
 #define FLASH_MEM_START_ADDRESS 0x${flash_mem_start_address}
 #define FLASH_MEM_SIZE 0x${flash_mem_size_address}
 #define FLASH_MEM_END_ADDRESS (FLASH_MEM_START_ADDRESS + FLASH_MEM_SIZE)

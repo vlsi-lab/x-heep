@@ -1,0 +1,455 @@
+Change tmrg_files' 'wor' fault-flag nets to 'logic'.
+
+Every 'wor' net in these TMR-generated files is driven by exactly one
+source and only ever read back into a plain `assign x = a|b|c;` that
+combines several such signals into a `tmrErrorX` output -- i.e. none of
+them rely on wor's actual multi-driver merge semantics, so 'logic' is
+functionally identical here.
+
+This works around a Verilator 5.040 incompatibility: its trace
+code-generator emits `VerilatedTraceSigKind::TRIOR` for `wor` nets, but
+that enum value isn't defined in this same Verilator version's own
+`verilated_trace.h`, causing `Vtestharness__Trace__*.cpp: error: 'TRIOR'
+is not a member of 'VerilatedTraceSigKind'` and blocking any build of a
+config that instantiates one of these TMR modules (e.g. obi_uartTMR).
+
+diff -ruN a/tmrg_files/counterTMR.sv b/tmrg_files/counterTMR.sv
+--- a/tmrg_files/counterTMR.sv	2026-07-15 15:02:16.871339551 +0200
++++ b/tmrg_files/counterTMR.sv	2026-07-15 15:02:16.868130624 +0200
+@@ -56,9 +56,9 @@
+   output tmrErrorB,
+   output tmrErrorC
+ );
+-wor i_countertmrErrorC;
+-wor i_countertmrErrorB;
+-wor i_countertmrErrorA;
++logic i_countertmrErrorC;
++logic i_countertmrErrorB;
++logic i_countertmrErrorA;
+ 
+ delta_counterTMR #(.WIDTH(WIDTH), .STICKY_OVERFLOW(STICKY_OVERFLOW)) i_counter (
+     .clk_i(clk_i),
+diff -ruN a/tmrg_files/delta_counterTMR.sv b/tmrg_files/delta_counterTMR.sv
+--- a/tmrg_files/delta_counterTMR.sv	2026-07-15 15:02:16.872319704 +0200
++++ b/tmrg_files/delta_counterTMR.sv	2026-07-15 15:02:16.868177767 +0200
+@@ -65,12 +65,12 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor overflow_qTmrErrorC;
+-wor counter_qTmrErrorC;
+-wor overflow_qTmrErrorB;
+-wor counter_qTmrErrorB;
+-wor overflow_qTmrErrorA;
+-wor counter_qTmrErrorA;
++logic overflow_qTmrErrorC;
++logic counter_qTmrErrorC;
++logic overflow_qTmrErrorB;
++logic counter_qTmrErrorB;
++logic overflow_qTmrErrorA;
++logic counter_qTmrErrorA;
+ logic [WIDTH:0] counter_qA;
+ logic [WIDTH:0] counter_qB;
+ logic [WIDTH:0] counter_qC;
+diff -ruN a/tmrg_files/fifo_v3TMR.sv b/tmrg_files/fifo_v3TMR.sv
+--- a/tmrg_files/fifo_v3TMR.sv	2026-07-15 15:02:16.873320599 +0200
++++ b/tmrg_files/fifo_v3TMR.sv	2026-07-15 15:02:16.868218205 +0200
+@@ -71,18 +71,18 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor write_pointer_qTmrErrorC;
+-wor status_cnt_qTmrErrorC;
+-wor read_pointer_qTmrErrorC;
+-wor mem_qTmrErrorC;
+-wor write_pointer_qTmrErrorB;
+-wor status_cnt_qTmrErrorB;
+-wor read_pointer_qTmrErrorB;
+-wor mem_qTmrErrorB;
+-wor write_pointer_qTmrErrorA;
+-wor status_cnt_qTmrErrorA;
+-wor read_pointer_qTmrErrorA;
+-wor mem_qTmrErrorA;
++logic write_pointer_qTmrErrorC;
++logic status_cnt_qTmrErrorC;
++logic read_pointer_qTmrErrorC;
++logic mem_qTmrErrorC;
++logic write_pointer_qTmrErrorB;
++logic status_cnt_qTmrErrorB;
++logic read_pointer_qTmrErrorB;
++logic mem_qTmrErrorB;
++logic write_pointer_qTmrErrorA;
++logic status_cnt_qTmrErrorA;
++logic read_pointer_qTmrErrorA;
++logic mem_qTmrErrorA;
+ logic gate_clockA;
+ logic gate_clockB;
+ logic gate_clockC;
+diff -ruN a/tmrg_files/obi_uart_baudgenTMR.sv b/tmrg_files/obi_uart_baudgenTMR.sv
+--- a/tmrg_files/obi_uart_baudgenTMR.sv	2026-07-15 15:02:16.874236777 +0200
++++ b/tmrg_files/obi_uart_baudgenTMR.sv	2026-07-15 15:02:16.868258433 +0200
+@@ -50,15 +50,15 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor i_oversample_countertmrErrorC;
+-wor i_baudrate_countertmrErrorC;
+-wor clear_double_qTmrErrorC;
+-wor i_oversample_countertmrErrorB;
+-wor i_baudrate_countertmrErrorB;
+-wor clear_double_qTmrErrorB;
+-wor i_oversample_countertmrErrorA;
+-wor i_baudrate_countertmrErrorA;
+-wor clear_double_qTmrErrorA;
++logic i_oversample_countertmrErrorC;
++logic i_baudrate_countertmrErrorC;
++logic clear_double_qTmrErrorC;
++logic i_oversample_countertmrErrorB;
++logic i_baudrate_countertmrErrorB;
++logic clear_double_qTmrErrorB;
++logic i_oversample_countertmrErrorA;
++logic i_baudrate_countertmrErrorA;
++logic clear_double_qTmrErrorA;
+ logic [15:0] divisorA;
+ logic [15:0] divisorB;
+ logic [15:0] divisorC;
+diff -ruN a/tmrg_files/obi_uart_interruptsTMR.sv b/tmrg_files/obi_uart_interruptsTMR.sv
+--- a/tmrg_files/obi_uart_interruptsTMR.sv	2026-07-15 15:02:16.875218186 +0200
++++ b/tmrg_files/obi_uart_interruptsTMR.sv	2026-07-15 15:02:16.868298871 +0200
+@@ -66,9 +66,9 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor intrpt_reg_qTmrErrorC;
+-wor intrpt_reg_qTmrErrorB;
+-wor intrpt_reg_qTmrErrorA;
++logic intrpt_reg_qTmrErrorC;
++logic intrpt_reg_qTmrErrorB;
++logic intrpt_reg_qTmrErrorA;
+ reg_intrpt_t intrpt_reg_dA;
+ reg_intrpt_t intrpt_reg_dB;
+ reg_intrpt_t intrpt_reg_dC;
+diff -ruN a/tmrg_files/obi_uart_modemTMR.sv b/tmrg_files/obi_uart_modemTMR.sv
+--- a/tmrg_files/obi_uart_modemTMR.sv	2026-07-15 15:02:16.876080726 +0200
++++ b/tmrg_files/obi_uart_modemTMR.sv	2026-07-15 15:02:16.868335957 +0200
+@@ -68,30 +68,30 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor sync_ri_n_qTmrErrorC;
+-wor sync_dsr_n_qTmrErrorC;
+-wor sync_cts_n_qTmrErrorC;
+-wor sync_cd_n_qTmrErrorC;
+-wor i_sync_ritmrErrorC;
+-wor i_sync_dsrtmrErrorC;
+-wor i_sync_ctstmrErrorC;
+-wor i_sync_cdtmrErrorC;
+-wor sync_ri_n_qTmrErrorB;
+-wor sync_dsr_n_qTmrErrorB;
+-wor sync_cts_n_qTmrErrorB;
+-wor sync_cd_n_qTmrErrorB;
+-wor i_sync_ritmrErrorB;
+-wor i_sync_dsrtmrErrorB;
+-wor i_sync_ctstmrErrorB;
+-wor i_sync_cdtmrErrorB;
+-wor sync_ri_n_qTmrErrorA;
+-wor sync_dsr_n_qTmrErrorA;
+-wor sync_cts_n_qTmrErrorA;
+-wor sync_cd_n_qTmrErrorA;
+-wor i_sync_ritmrErrorA;
+-wor i_sync_dsrtmrErrorA;
+-wor i_sync_ctstmrErrorA;
+-wor i_sync_cdtmrErrorA;
++logic sync_ri_n_qTmrErrorC;
++logic sync_dsr_n_qTmrErrorC;
++logic sync_cts_n_qTmrErrorC;
++logic sync_cd_n_qTmrErrorC;
++logic i_sync_ritmrErrorC;
++logic i_sync_dsrtmrErrorC;
++logic i_sync_ctstmrErrorC;
++logic i_sync_cdtmrErrorC;
++logic sync_ri_n_qTmrErrorB;
++logic sync_dsr_n_qTmrErrorB;
++logic sync_cts_n_qTmrErrorB;
++logic sync_cd_n_qTmrErrorB;
++logic i_sync_ritmrErrorB;
++logic i_sync_dsrtmrErrorB;
++logic i_sync_ctstmrErrorB;
++logic i_sync_cdtmrErrorB;
++logic sync_ri_n_qTmrErrorA;
++logic sync_dsr_n_qTmrErrorA;
++logic sync_cts_n_qTmrErrorA;
++logic sync_cd_n_qTmrErrorA;
++logic i_sync_ritmrErrorA;
++logic i_sync_dsrtmrErrorA;
++logic i_sync_ctstmrErrorA;
++logic i_sync_cdtmrErrorA;
+ logic sync_cts_nA;
+ logic sync_cts_nB;
+ logic sync_cts_nC;
+diff -ruN a/tmrg_files/obi_uart_registerTMR.sv b/tmrg_files/obi_uart_registerTMR.sv
+--- a/tmrg_files/obi_uart_registerTMR.sv	2026-07-15 15:02:16.877904561 +0200
++++ b/tmrg_files/obi_uart_registerTMR.sv	2026-07-15 15:02:16.868422979 +0200
+@@ -57,24 +57,24 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor word_addr_qTmrErrorC;
+-wor we_qTmrErrorC;
+-wor w_err_qTmrErrorC;
+-wor valid_qTmrErrorC;
+-wor req_qTmrErrorC;
+-wor id_qTmrErrorC;
+-wor word_addr_qTmrErrorB;
+-wor we_qTmrErrorB;
+-wor w_err_qTmrErrorB;
+-wor valid_qTmrErrorB;
+-wor req_qTmrErrorB;
+-wor id_qTmrErrorB;
+-wor word_addr_qTmrErrorA;
+-wor we_qTmrErrorA;
+-wor w_err_qTmrErrorA;
+-wor valid_qTmrErrorA;
+-wor req_qTmrErrorA;
+-wor id_qTmrErrorA;
++logic word_addr_qTmrErrorC;
++logic we_qTmrErrorC;
++logic w_err_qTmrErrorC;
++logic valid_qTmrErrorC;
++logic req_qTmrErrorC;
++logic id_qTmrErrorC;
++logic word_addr_qTmrErrorB;
++logic we_qTmrErrorB;
++logic w_err_qTmrErrorB;
++logic valid_qTmrErrorB;
++logic req_qTmrErrorB;
++logic id_qTmrErrorB;
++logic word_addr_qTmrErrorA;
++logic we_qTmrErrorA;
++logic w_err_qTmrErrorA;
++logic valid_qTmrErrorA;
++logic req_qTmrErrorA;
++logic id_qTmrErrorA;
+ logic [ObiCfg.DataWidth - 1:0] rsp_dataA;
+ logic [ObiCfg.DataWidth - 1:0] rsp_dataB;
+ logic [ObiCfg.DataWidth - 1:0] rsp_dataC;
+diff -ruN a/tmrg_files/obi_uart_rxTMR.sv b/tmrg_files/obi_uart_rxTMR.sv
+--- a/tmrg_files/obi_uart_rxTMR.sv	2026-07-15 15:02:16.879350695 +0200
++++ b/tmrg_files/obi_uart_rxTMR.sv	2026-07-15 15:02:16.868493030 +0200
+@@ -59,51 +59,51 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor timing_bit_center_qTmrErrorC;
+-wor timeout_count_qTmrErrorC;
+-wor state_qTmrErrorC;
+-wor rsr_qTmrErrorC;
+-wor rhr_full_qTmrErrorC;
+-wor parity_err_qTmrErrorC;
+-wor i_synctmrErrorC;
+-wor i_fifo_v3tmrErrorC;
+-wor i_countertmrErrorC;
+-wor high_count_qTmrErrorC;
+-wor framing_err_qTmrErrorC;
+-wor filtered_rxd_qTmrErrorC;
+-wor fifo_error_index_qTmrErrorC;
+-wor break_qTmrErrorC;
+-wor bitcount_qTmrErrorC;
+-wor timing_bit_center_qTmrErrorB;
+-wor timeout_count_qTmrErrorB;
+-wor state_qTmrErrorB;
+-wor rsr_qTmrErrorB;
+-wor rhr_full_qTmrErrorB;
+-wor parity_err_qTmrErrorB;
+-wor i_synctmrErrorB;
+-wor i_fifo_v3tmrErrorB;
+-wor i_countertmrErrorB;
+-wor high_count_qTmrErrorB;
+-wor framing_err_qTmrErrorB;
+-wor filtered_rxd_qTmrErrorB;
+-wor fifo_error_index_qTmrErrorB;
+-wor break_qTmrErrorB;
+-wor bitcount_qTmrErrorB;
+-wor timing_bit_center_qTmrErrorA;
+-wor timeout_count_qTmrErrorA;
+-wor state_qTmrErrorA;
+-wor rsr_qTmrErrorA;
+-wor rhr_full_qTmrErrorA;
+-wor parity_err_qTmrErrorA;
+-wor i_synctmrErrorA;
+-wor i_fifo_v3tmrErrorA;
+-wor i_countertmrErrorA;
+-wor high_count_qTmrErrorA;
+-wor framing_err_qTmrErrorA;
+-wor filtered_rxd_qTmrErrorA;
+-wor fifo_error_index_qTmrErrorA;
+-wor break_qTmrErrorA;
+-wor bitcount_qTmrErrorA;
++logic timing_bit_center_qTmrErrorC;
++logic timeout_count_qTmrErrorC;
++logic state_qTmrErrorC;
++logic rsr_qTmrErrorC;
++logic rhr_full_qTmrErrorC;
++logic parity_err_qTmrErrorC;
++logic i_synctmrErrorC;
++logic i_fifo_v3tmrErrorC;
++logic i_countertmrErrorC;
++logic high_count_qTmrErrorC;
++logic framing_err_qTmrErrorC;
++logic filtered_rxd_qTmrErrorC;
++logic fifo_error_index_qTmrErrorC;
++logic break_qTmrErrorC;
++logic bitcount_qTmrErrorC;
++logic timing_bit_center_qTmrErrorB;
++logic timeout_count_qTmrErrorB;
++logic state_qTmrErrorB;
++logic rsr_qTmrErrorB;
++logic rhr_full_qTmrErrorB;
++logic parity_err_qTmrErrorB;
++logic i_synctmrErrorB;
++logic i_fifo_v3tmrErrorB;
++logic i_countertmrErrorB;
++logic high_count_qTmrErrorB;
++logic framing_err_qTmrErrorB;
++logic filtered_rxd_qTmrErrorB;
++logic fifo_error_index_qTmrErrorB;
++logic break_qTmrErrorB;
++logic bitcount_qTmrErrorB;
++logic timing_bit_center_qTmrErrorA;
++logic timeout_count_qTmrErrorA;
++logic state_qTmrErrorA;
++logic rsr_qTmrErrorA;
++logic rhr_full_qTmrErrorA;
++logic parity_err_qTmrErrorA;
++logic i_synctmrErrorA;
++logic i_fifo_v3tmrErrorA;
++logic i_countertmrErrorA;
++logic high_count_qTmrErrorA;
++logic framing_err_qTmrErrorA;
++logic filtered_rxd_qTmrErrorA;
++logic fifo_error_index_qTmrErrorA;
++logic break_qTmrErrorA;
++logic bitcount_qTmrErrorA;
+ logic timing_bit_center_qA;
+ logic timing_bit_center_qB;
+ logic timing_bit_center_qC;
+diff -ruN a/tmrg_files/obi_uartTMR.sv b/tmrg_files/obi_uartTMR.sv
+--- a/tmrg_files/obi_uartTMR.sv	2026-07-15 15:02:16.880649114 +0200
++++ b/tmrg_files/obi_uartTMR.sv	2026-07-15 15:02:16.868556446 +0200
+@@ -78,30 +78,30 @@
+ wire cd_niC;
+ wire cd_niB;
+ wire cd_niA;
+-wor i_uart_txtmrErrorC;
+-wor i_uart_rxtmrErrorC;
+-wor i_uart_registertmrErrorC;
+-wor i_uart_modemtmrErrorC;
+-wor i_uart_interruptstmrErrorC;
+-wor i_uart_baudgentmrErrorC;
+-wor i_uart_txtmrErrorB;
+-wor i_uart_rxtmrErrorB;
+-wor i_uart_registertmrErrorB;
+-wor i_uart_modemtmrErrorB;
+-wor i_uart_interruptstmrErrorB;
+-wor i_uart_baudgentmrErrorB;
+-wor i_uart_txtmrErrorA;
+-wor i_uart_rxtmrErrorA;
+-wor i_uart_registertmrErrorA;
+-wor i_uart_modemtmrErrorA;
+-wor i_uart_interruptstmrErrorA;
+-wor i_uart_baudgentmrErrorA;
+-wor txdTmrError;
+-wor rts_noTmrError;
+-wor reg_readTmrError;
+-wor out2_noTmrError;
+-wor out1_noTmrError;
+-wor dtr_noTmrError;
++logic i_uart_txtmrErrorC;
++logic i_uart_rxtmrErrorC;
++logic i_uart_registertmrErrorC;
++logic i_uart_modemtmrErrorC;
++logic i_uart_interruptstmrErrorC;
++logic i_uart_baudgentmrErrorC;
++logic i_uart_txtmrErrorB;
++logic i_uart_rxtmrErrorB;
++logic i_uart_registertmrErrorB;
++logic i_uart_modemtmrErrorB;
++logic i_uart_interruptstmrErrorB;
++logic i_uart_baudgentmrErrorB;
++logic i_uart_txtmrErrorA;
++logic i_uart_rxtmrErrorA;
++logic i_uart_registertmrErrorA;
++logic i_uart_modemtmrErrorA;
++logic i_uart_interruptstmrErrorA;
++logic i_uart_baudgentmrErrorA;
++logic txdTmrError;
++logic rts_noTmrError;
++logic reg_readTmrError;
++logic out2_noTmrError;
++logic out1_noTmrError;
++logic dtr_noTmrError;
+ wire txd;
+ wire rts_noC;
+ wire rts_noB;
+diff -ruN a/tmrg_files/obi_uart_txTMR.sv b/tmrg_files/obi_uart_txTMR.sv
+--- a/tmrg_files/obi_uart_txTMR.sv	2026-07-15 15:02:16.881775584 +0200
++++ b/tmrg_files/obi_uart_txTMR.sv	2026-07-15 15:02:16.868598351 +0200
+@@ -54,24 +54,24 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor txd_qTmrErrorC;
+-wor tsr_qTmrErrorC;
+-wor tsr_count_qTmrErrorC;
+-wor thr_full_qTmrErrorC;
+-wor state_qTmrErrorC;
+-wor i_fifo_v3tmrErrorC;
+-wor txd_qTmrErrorB;
+-wor tsr_qTmrErrorB;
+-wor tsr_count_qTmrErrorB;
+-wor thr_full_qTmrErrorB;
+-wor state_qTmrErrorB;
+-wor i_fifo_v3tmrErrorB;
+-wor txd_qTmrErrorA;
+-wor tsr_qTmrErrorA;
+-wor tsr_count_qTmrErrorA;
+-wor thr_full_qTmrErrorA;
+-wor state_qTmrErrorA;
+-wor i_fifo_v3tmrErrorA;
++logic txd_qTmrErrorC;
++logic tsr_qTmrErrorC;
++logic tsr_count_qTmrErrorC;
++logic thr_full_qTmrErrorC;
++logic state_qTmrErrorC;
++logic i_fifo_v3tmrErrorC;
++logic txd_qTmrErrorB;
++logic tsr_qTmrErrorB;
++logic tsr_count_qTmrErrorB;
++logic thr_full_qTmrErrorB;
++logic state_qTmrErrorB;
++logic i_fifo_v3tmrErrorB;
++logic txd_qTmrErrorA;
++logic tsr_qTmrErrorA;
++logic tsr_count_qTmrErrorA;
++logic thr_full_qTmrErrorA;
++logic state_qTmrErrorA;
++logic i_fifo_v3tmrErrorA;
+ logic fifo_clearA;
+ logic fifo_clearB;
+ logic fifo_clearC;
+diff -ruN a/tmrg_files/syncTMR.sv b/tmrg_files/syncTMR.sv
+--- a/tmrg_files/syncTMR.sv	2026-07-15 15:02:16.882926080 +0200
++++ b/tmrg_files/syncTMR.sv	2026-07-15 15:02:16.868637671 +0200
+@@ -47,9 +47,9 @@
+ wire clk_iC;
+ wire clk_iB;
+ wire clk_iA;
+-wor reg_qTmrErrorC;
+-wor reg_qTmrErrorB;
+-wor reg_qTmrErrorA;
++logic reg_qTmrErrorC;
++logic reg_qTmrErrorB;
++logic reg_qTmrErrorA;
+ (* dont_touch = "true" *)(* async_reg = "true" *) logic [STAGES - 1:0] reg_qA;
+ (* dont_touch = "true" *)(* async_reg = "true" *) logic [STAGES - 1:0] reg_qB;
+ (* dont_touch = "true" *)(* async_reg = "true" *) logic [STAGES - 1:0] reg_qC;
