@@ -17,6 +17,7 @@ filesets:
     - pulp_platform/obi/src/relobi_mux.sv
     - pulp_platform/obi/src/relobi_cut.sv
     - pulp_platform/obi/src/relobi_sram_shim.sv
+    - pulp_platform/obi/src/obi_sram_shim.sv
     - pulp_platform/obi/src/relobi_xbar.sv
     - pulp_platform/obi/src/relobi_isolate.sv
     - pulp_platform/obi/src/relobi_r_other_corrector.sv

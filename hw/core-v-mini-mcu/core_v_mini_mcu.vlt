@@ -95,3 +95,30 @@ lint_off -rule UNOPTFLAT -file "*/relobi_demux.sv" -match "Signal unoptimizable:
 lint_off -rule UNOPTFLAT -file "*/relobi_demux.sv" -match "Signal unoptimizable: *ircular *logic:*.__VdfgRegularize_h4fcf706a_0_2'"
 lint_off -rule UNOPTFLAT -file "*/addr_decode.sv" -match "Signal unoptimizable: *ircular *logic:*.i_addr_decode.idx_o'"
 
+lint_off -rule UNUSED -file "*/obi_sram_shim.sv" -match "Bits of signal are not used: 'obi_req_i'[2:0]"
+
+// ECC Mem Scrubber enabled
+lint_off -rule UNUSED -file "*/relobi_sram_shim.sv" -match "Signal is not used: 'rid_voted'"
+lint_off -rule UNUSED -file "*/relobi_sram_shim.sv" -match "Signal is not driven, nor used: 'be'"
+
+lint_off -rule UNUSED -file "*/relobi_sram_shim.sv" -match "Signal is not used: 'a_addr_i'"
+lint_off -rule UNUSED -file "*/relobi_sram_shim.sv" -match "Signal is not used: 'addr_buffer'"
+lint_off -rule UNDRIVEN -file "*/relobi_sram_shim.sv" -match "Signal is not driven: 'addr_o'"
+lint_off -rule UNDRIVEN -file "*/relobi_sram_shim.sv" -match "Bits of signal are not driven: 'hsiao_errs'[7:6]" 
+
+
+
+
+lint_off -rule UNUSED -file "*/ecc_scrubber.sv" -match "Signal is not used: 'ecc_in_i'"
+lint_off -rule UNUSED -file "*/ecc_scrubber.sv" -match "Signal is not used: 'ecc_err_i'"
+lint_off -rule UNUSED -file "*/ecc_scrubber.sv" -match "Signal is not used: 'intc_wdata_i'"
+
+// Disable TMR on ECC memories
+lint_off -rule UNDRIVEN -file "*/ecc_scrubber.sv" -match "Bits of signal are not driven: 'faults'[41:1]"
+lint_off -rule UNUSED -file "*/ecc_scrubber.sv" -match "Signal is not used: 'read_add_d'"
+lint_off -rule UNUSED -file "*/ecc_scrubber.sv" -match "Signal is not used: 'read_d'"
+
+
+
+lint_off -rule SYNCASYNCNET -file "*/counter.sv" -match "Signal flopped as both synchronous and async:*rst_ni'"
+

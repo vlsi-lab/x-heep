@@ -333,6 +333,8 @@ module core_v_mini_mcu #(
   obi_rsp_t core_instr_resp;
   obi_req_t core_data_req;
   obi_rsp_t core_data_resp;
+  obi_req_t [core_v_mini_mcu_pkg::NUM_BANKS-1:0] ram_slave_req;
+  obi_rsp_t [core_v_mini_mcu_pkg::NUM_BANKS-1:0] ram_slave_resp;
   obi_req_t debug_master_req;
   obi_rsp_t debug_master_resp;
   obi_req_t [1:0] dma_read_req;
@@ -343,8 +345,6 @@ module core_v_mini_mcu #(
   obi_rsp_t [1:0] dma_addr_resp;
 
   // ram signals
-  obi_req_t [core_v_mini_mcu_pkg::NUM_BANKS-1:0] ram_slave_req;
-  obi_rsp_t [core_v_mini_mcu_pkg::NUM_BANKS-1:0] ram_slave_resp;
 
   // w25q128jw controller signals
   logic w25q128jw_controller_intr;
@@ -583,10 +583,15 @@ module core_v_mini_mcu #(
       .ext_dma_addr_resp_i(ext_dma_addr_resp_i)
   );
 
+  //-----------------
+  // Memory Subsystem
+  //-----------------
 
 
   memory_subsystem #(
       .NUM_BANKS(core_v_mini_mcu_pkg::NUM_BANKS),
+      .ObiCfg(ObiCfg),
+      .DATA_WIDTH(ObiCfg.DataWidth),
       .obi_req_t(obi_req_t),
       .obi_rsp_t(obi_rsp_t)
   ) memory_subsystem_i (

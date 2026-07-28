@@ -26,7 +26,7 @@ module system_bus
     // OBI and data types
     parameter type obi_req_t     = logic,
     parameter type obi_rsp_t    = logic,
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
     parameter xheep_obi_pkg::obi_cfg_t ObiCfg          = xheep_obi_pkg::xheep_obiCfg,
     parameter type addr_map_rule_t = logic,
     parameter type a_optional_t = logic,
@@ -42,7 +42,7 @@ module system_bus
     input logic clk_i,
     input logic rst_ni,
 
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
     output fault_o,
     input testmode_i,
 % endif
@@ -132,7 +132,7 @@ module system_bus
   // Dummy external master port (to prevent unused warning)
   obi_req_t [EXT_XBAR_NMASTER_RND-1:0] ext_xbar_req_unused;
 
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
   logic [core_v_mini_mcu_pkg::SYSTEM_XBAR_NMASTER-1:0] fault_demux;
   logic fault_xbar;
 
@@ -260,7 +260,7 @@ module system_bus
   // to the corresponding external master port.
   generate
     for (genvar i = 0; unsigned'(i) < SYSTEM_XBAR_NMASTER; i++) begin : gen_demux_xbar
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
         for (genvar j = 0; j < 3; j++) begin : gen_addr_decode
             addr_decode #(
                 .NoIndices (2),
@@ -322,7 +322,7 @@ module system_bus
 
   // Internal system crossbar
   // ------------------------
-% if not xheep.reliability:
+% if not xheep.reliability.bus_redundant:
     system_xbar #(
         .XBAR_NMASTER(core_v_mini_mcu_pkg::SYSTEM_XBAR_NMASTER + EXT_XBAR_NMASTER),
         .XBAR_NSLAVE (core_v_mini_mcu_pkg::SYSTEM_XBAR_NSLAVE),

@@ -7,7 +7,7 @@
 
   upstream: {
     url: "https://github.com/pulp-platform/redundancy_cells.git",
-    rev: "master",
+    rev: "766e376b7ddb70e744740e703a371f7fe7cc3e74",
   },
   
   patch_dir: "../patches/pulp_platform_redundancy_cells",

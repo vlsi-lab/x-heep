@@ -9,6 +9,6 @@
   upstream:
   {
     url: https://github.com/pulp-platform/redundancy_cells.git
-    rev: 3c7c57e80fe2f65812db092182ce68ee810943df
+    rev: 766e376b7ddb70e744740e703a371f7fe7cc3e74
   }
 }

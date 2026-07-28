@@ -12,7 +12,7 @@ module cpu_subsystem
 #(
     parameter BOOT_ADDR = 'h180,
     parameter DM_HALTADDRESS = '0,
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
     parameter type rel_obi_req_t = logic,
     parameter type rel_obi_rsp_t = logic,
     parameter xheep_obi_pkg::obi_cfg_t ObiCfg = xheep_obi_pkg::xheep_obiCfg,
@@ -28,7 +28,7 @@ module cpu_subsystem
     input logic [31:0] hart_id_i,
 
     // Instruction memory interface
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
     output rel_obi_req_t  core_instr_req_o,
     input  rel_obi_rsp_t  core_instr_resp_i,
 
@@ -286,7 +286,7 @@ ${",\n".join(cv32e40x_params)}
     logic     [31:0] data_wdata;
     logic     [31:0] data_rdata;
 
-% if xheep.reliability:
+% if xheep.reliability.bus_redundant:
 
     logic            instr_err;
     logic            data_err;
@@ -523,7 +523,7 @@ ${",\n".join(cv32e40p_params)}
 
 % endif
 
-% if not xheep.reliability:
+% if not xheep.reliability.bus_redundant:
   // Drive OBI request-side control and integrity parity bits. The cores only
   // provide req/rready; parity mirrors the reliable path (reqpar = ~req).
   assign core_instr_req_o.rready    = 1'b1;

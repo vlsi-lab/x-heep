@@ -41,6 +41,7 @@ filesets:
     - x-heep:ip:obi_fifo
     - x-heep:ip:pdm2pcm
     - x-heep:ip:serial_link_xheep_wrapper
+    - x-heep:ip:ecc_sram_xheep_wrapper
     - esl_epfl:ip:obi_spi_slave
     - x-heep:ip:w25q128jw_controller
     files:

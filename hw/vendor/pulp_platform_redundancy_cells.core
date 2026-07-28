@@ -11,11 +11,13 @@ filesets:
     - pulp_platform/redundancy_cells/rtl/hsiao_ecc/hsiao_ecc_pkg.sv
     - pulp_platform/redundancy_cells/rtl/hsiao_ecc/hsiao_ecc_enc.sv
     - pulp_platform/redundancy_cells/rtl/hsiao_ecc/hsiao_ecc_dec.sv
+    - pulp_platform/redundancy_cells/rtl/hsiao_ecc/hsiao_ecc_cor.sv
     - pulp_platform/redundancy_cells/rtl/TMR_word_voter.sv
     - pulp_platform/redundancy_cells/rtl/rel_fifo.sv
     - pulp_platform/redundancy_cells/rtl/TMR_voter_fail.sv
     - pulp_platform/redundancy_cells/rtl/rel_rr_arb_tree.sv
     - pulp_platform/redundancy_cells/rtl/ecc_concat_32_64.sv
+    - pulp_platform/redundancy_cells/rtl/ecc_wrap/ecc_scrubber.sv
     - pulp_platform/redundancy_cells/rtl/TMR_voter.sv
     - pulp_platform/redundancy_cells/rtl/TMR_voter_detect.sv
     - pulp_platform/redundancy_cells/rtl/rel_spill_register.sv
