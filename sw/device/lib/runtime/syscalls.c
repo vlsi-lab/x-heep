@@ -31,6 +31,7 @@ extern "C" {
 #include <reent.h>
 #include <errno.h>
 #include "uart.h"
+#include "obi_uart.h"
 #include "soc_ctrl.h"
 #include "core_v_mini_mcu.h"
 #include "error.h"
@@ -256,6 +257,8 @@ int _write(int file, const void *ptr, int len)
     soc_ctrl_t soc_ctrl;
     soc_ctrl.base_addr = mmio_region_from_addr((uintptr_t)SOC_CTRL_START_ADDRESS);
 
+    #if defined(UART_IS_INCLUDED)
+    // Internal (OpenTitan) UART, inside peripheral_subsystem.
     uart_t uart;
     uart.base_addr   = mmio_region_from_addr((uintptr_t)UART_START_ADDRESS);
     uart.baudrate    = UART_BAUDRATE;
@@ -271,7 +274,21 @@ int _write(int file, const void *ptr, int len)
         return -1;
     }
     return uart_write(&uart,(uint8_t *)ptr,len);
+    #else
+    // Internal UART excluded from the config: use the external obi_uart on
+    // the testharness's ext_bus crossbar instead (see
+    // docs/source/reliable_uart_integration_strategy.md).
+    obi_uart_t uart;
+    uart.base_addr   = mmio_region_from_addr((uintptr_t)OBI_UART_EXT_START_ADDRESS);
+    uart.baudrate    = UART_BAUDRATE;
+    uart.clk_freq_hz = soc_ctrl_get_frequency(&soc_ctrl);
 
+    if (obi_uart_init(&uart) != kErrorOk) {
+        errno = ENOSYS;
+        return -1;
+    }
+    return obi_uart_write(&uart,(uint8_t *)ptr,len);
+    #endif
 }
 
 

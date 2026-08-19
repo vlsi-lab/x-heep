@@ -106,6 +106,104 @@ if cpu.is_defined("num_mhpmcounters"):
     cv32e20_params.append(f".MHPMCounterNum({cpu.get_sv_str('num_mhpmcounters')})")
 %>
 
+    logic            instr_req;
+    logic            instr_gnt;
+    logic            instr_rvalid;
+    logic     [31:0] instr_addr;
+    logic     [31:0] instr_rdata;
+    logic            data_req;
+    logic            data_gnt;
+    logic            data_rvalid;
+    logic            data_we;
+    logic     [ 3:0] data_be;
+    logic     [31:0] data_addr;
+    logic     [31:0] data_wdata;
+    logic     [31:0] data_rdata;
+
+% if xheep.reliability:
+
+    obi_req_t        instr_req_struct;
+    obi_rsp_t        instr_rsp_struct;
+    obi_req_t        data_req_struct;
+    obi_rsp_t        data_rsp_struct;
+
+    assign instr_req_struct.req          = instr_req;
+    assign instr_req_struct.reqpar       = ~instr_req;
+    assign instr_req_struct.rready       = 1'b1;
+    assign instr_req_struct.rreadypar    = 1'b0;
+    assign instr_req_struct.a.addr       = instr_addr;
+    assign instr_req_struct.a.wdata      = '0;
+    assign instr_req_struct.a.we         = '0;
+    assign instr_req_struct.a.be         = '0;
+    assign instr_req_struct.a.aid        = '0;
+    assign instr_req_struct.a.a_optional = '0;
+
+    assign data_req_struct.req          = data_req;
+    assign data_req_struct.reqpar       = ~data_req;
+    assign data_req_struct.rready       = 1'b1;
+    assign data_req_struct.rreadypar    = 1'b0;
+    assign data_req_struct.a.addr       = data_addr;
+    assign data_req_struct.a.wdata      = data_wdata;
+    assign data_req_struct.a.we         = data_we;
+    assign data_req_struct.a.be         = data_be;
+    assign data_req_struct.a.aid        = '0;
+    assign data_req_struct.a.a_optional = '0;
+
+    assign instr_gnt    = instr_rsp_struct.gnt;
+    assign instr_rvalid = instr_rsp_struct.rvalid;
+    assign instr_rdata  = instr_rsp_struct.r.rdata;
+    assign data_gnt     = data_rsp_struct.gnt;
+    assign data_rvalid  = data_rsp_struct.rvalid;
+    assign data_rdata   = data_rsp_struct.r.rdata;
+
+    relobi_encoder #(
+        .Cfg(ObiCfg),
+        .relobi_req_t(rel_obi_req_t),
+        .relobi_rsp_t(rel_obi_rsp_t),
+        .obi_req_t(obi_req_t),
+        .obi_rsp_t(obi_rsp_t),
+        .a_optional_t(logic),
+        .r_optional_t(logic)
+    ) i_instr_encoder (
+        .req_i(instr_req_struct),
+        .rsp_o(instr_rsp_struct),
+        .rel_req_o(core_instr_req_o),
+        .rel_rsp_i(core_instr_resp_i),
+        .fault_o()
+    );
+
+    relobi_encoder #(
+        .Cfg(ObiCfg),
+        .relobi_req_t(rel_obi_req_t),
+        .relobi_rsp_t(rel_obi_rsp_t),
+        .obi_req_t(obi_req_t),
+        .obi_rsp_t(obi_rsp_t),
+        .a_optional_t(logic),
+        .r_optional_t(logic)
+    ) i_data_encoder (
+        .req_i(data_req_struct),
+        .rsp_o(data_rsp_struct),
+        .rel_req_o(core_data_req_o),
+        .rel_rsp_i(core_data_resp_i),
+        .fault_o()
+    );
+% else:
+    assign core_instr_req_o.a.addr = instr_addr;
+    assign core_instr_req_o.req    = instr_req;
+    assign instr_rdata             = core_instr_resp_i.r.rdata;
+    assign instr_gnt               = core_instr_resp_i.gnt;
+    assign instr_rvalid            = core_instr_resp_i.rvalid;
+
+    assign core_data_req_o.a.addr  = data_addr;
+    assign core_data_req_o.a.wdata = data_wdata;
+    assign core_data_req_o.a.we    = data_we;
+    assign core_data_req_o.req     = data_req;
+    assign core_data_req_o.a.be    = data_be;
+    assign data_rdata              = core_data_resp_i.r.rdata;
+    assign data_gnt                = core_data_resp_i.gnt;
+    assign data_rvalid             = core_data_resp_i.rvalid;
+% endif
+
     cve2_xif_wrapper #(
 ${",\n".join(cv32e20_params)}
     ) cv32e20_i (
@@ -119,20 +217,20 @@ ${",\n".join(cv32e20_params)}
         .dm_exception_addr_i(32'h0),
         .dm_halt_addr_i(DM_HALTADDRESS),
 
-        .instr_addr_o  (core_instr_req_o.a.addr),
-        .instr_req_o   (core_instr_req_o.req),
-        .instr_rdata_i (core_instr_resp_i.r.rdata),
-        .instr_gnt_i   (core_instr_resp_i.gnt),
-        .instr_rvalid_i(core_instr_resp_i.rvalid),
+        .instr_addr_o  (instr_addr),
+        .instr_req_o   (instr_req),
+        .instr_rdata_i (instr_rdata),
+        .instr_gnt_i   (instr_gnt),
+        .instr_rvalid_i(instr_rvalid),
 
-        .data_addr_o  (core_data_req_o.a.addr),
-        .data_wdata_o (core_data_req_o.a.wdata),
-        .data_we_o    (core_data_req_o.a.we),
-        .data_req_o   (core_data_req_o.req),
-        .data_be_o    (core_data_req_o.a.be),
-        .data_rdata_i (core_data_resp_i.r.rdata),
-        .data_gnt_i   (core_data_resp_i.gnt),
-        .data_rvalid_i(core_data_resp_i.rvalid),
+        .data_addr_o  (data_addr),
+        .data_wdata_o (data_wdata),
+        .data_we_o    (data_we),
+        .data_req_o   (data_req),
+        .data_be_o    (data_be),
+        .data_rdata_i (data_rdata),
+        .data_gnt_i   (data_gnt),
+        .data_rvalid_i(data_rvalid),
 
         .irq_software_i(irq_i[3]),
         .irq_timer_i   (irq_i[7]),

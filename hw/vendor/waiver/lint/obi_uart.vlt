@@ -1,0 +1,37 @@
+// Copyright 2022 OpenHW Group
+// Solderpad Hardware License, Version 2.1, see LICENSE.md for details.
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
+`verilator_config
+
+lint_off -rule ALWCOMBORDER -file "*/obi_uart_rx.sv" -match "*'break_d'*"
+lint_off -rule ALWCOMBORDER -file "*/obi_uart_rx.sv" -match "*'word_len_bits'*"
+lint_off -rule UNOPTFLAT -file "*/obi_uart_rx.sv" -match "Signal unoptimizable: Circular combinational logic:*"
+lint_off -rule UNUSED -file "*/obi_uart.sv" -match "Parameter is not used: 'ObiCfg'*"
+lint_off -rule UNUSED -file "*/obi_uart_modem.sv" -match "*'reg_read_i'*"
+lint_off -rule UNUSED -file "*/obi_uart_baudgen.sv" -match "*'reg_read_i'*"
+lint_off -rule UNUSED -file "*/obi_uart_baudgen.sv" -match "*'baud_count'*"
+lint_off -rule UNUSED -file "*/obi_uart_rx.sv" -match "*'reg_read_i'*"
+lint_off -rule UNUSED -file "*/obi_uart_tx.sv" -match "*'reg_read_i'*"
+lint_off -rule UNUSED -file "*/obi_uart_tx.sv" -match "*'fifo_usage'*"
+lint_off -rule UNUSED -file "*/obi_uart_interrupts.sv" -match "*'reg_read_i'*"
+lint_off -rule UNUSED -file "*/obi_uart_interrupts.sv" -match "*'reg_write_i'*"
+lint_off -rule UNUSED -file "*/obi_uart_register.sv" -match "*'obi_req_i'*"
+
+// obi_uartTMR (reliability path): same warnings as above, tripled across
+// the three TMR lanes (signal names suffixed A/B/C by the tmr-generator).
+lint_off -rule ALWCOMBORDER -file "*/obi_uart_rxTMR.sv" -match "*'break_d*'*"
+lint_off -rule ALWCOMBORDER -file "*/obi_uart_rxTMR.sv" -match "*'word_len_bits*'*"
+lint_off -rule UNOPTFLAT -file "*/obi_uart_rxTMR.sv" -match "Signal unoptimizable: Circular combinational logic:*"
+lint_off -rule UNUSED -file "*/obi_uartTMR.sv" -match "Parameter is not used: 'ObiCfg'*"
+lint_off -rule UNUSED -file "*/obi_uartTMR.sv" -match "*'reg_read'*"
+lint_off -rule UNUSED -file "*/obi_uart_modemTMR.sv" -match "*'reg_read_i*'*"
+lint_off -rule UNUSED -file "*/obi_uart_baudgenTMR.sv" -match "*'reg_read_i*'*"
+lint_off -rule UNUSED -file "*/obi_uart_baudgenTMR.sv" -match "*'baud_count*'*"
+lint_off -rule UNUSED -file "*/obi_uart_rxTMR.sv" -match "*'reg_read_i*'*"
+lint_off -rule UNUSED -file "*/obi_uart_txTMR.sv" -match "*'reg_read_i*'*"
+lint_off -rule UNUSED -file "*/obi_uart_txTMR.sv" -match "*'fifo_usage*'*"
+lint_off -rule UNUSED -file "*/obi_uart_interruptsTMR.sv" -match "*'reg_read_i*'*"
+lint_off -rule UNUSED -file "*/obi_uart_interruptsTMR.sv" -match "*'reg_write_i*'*"
+lint_off -rule UNUSED -file "*/obi_uart_registerTMR.sv" -match "*'obi_req_i*'*"
+lint_off -rule UNUSED -file "*/fifo_v3TMR.sv" -match "*'testmode_i*'*"
